@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: wiz-ai-pro
+    runtime: node
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_URL
+        value: https://api.deepseek.com/v1/chat/completions
+    disk:
+      name: sessions
+      mountPath: /opt/render/project/src/sessions
+      sizeGB: 2
