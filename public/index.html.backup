@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wiz AI Pro - Ultimate WhatsApp Bot</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Animated Background -->
+    <div class="bg-animation">
+        <div class="gradient-sphere sphere-1"></div>
+        <div class="gradient-sphere sphere-2"></div>
+        <div class="gradient-sphere sphere-3"></div>
+        <div class="grid-overlay"></div>
+        <div class="particles" id="particles"></div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar" id="navbar">
+        <div class="nav-brand">
+            <div class="logo-icon">⚡</div>
+            <span class="logo-text">WIZ AI</span>
+            <span class="logo-pro">PRO</span>
+        </div>
+        <div class="nav-links" id="navLinks">
+            <a href="#features" class="nav-link">Features</a>
+            <a href="#commands" class="nav-link">Commands</a>
+            <a href="#pricing" class="nav-link">Pricing</a>
+        </div>
+        <div class="nav-actions" id="navActions">
+            <button class="btn btn-ghost" onclick="showLogin()">Login</button>
+            <button class="btn btn-primary" onclick="showRegister()">Get Started</button>
+        </div>
+        <div class="nav-user hidden" id="navUser">
+            <span class="user-name" id="userName"></span>
+            <button class="btn btn-ghost" onclick="logout()">Logout</button>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero" id="hero">
+        <div class="hero-content">
+            <div class="badge animate-fade-in">
+                <span class="badge-pulse"></span>
+                🚀 Next-Gen Automation
+            </div>
+            <h1 class="hero-title animate-slide-up">
+                <span class="gradient-text">Wiz AI</span>
+                <span class="outline-text">Pro</span>
+            </h1>
+            <p class="hero-subtitle animate-slide-up delay-1">
+                The Most Advanced WhatsApp Bot Platform with 50+ Commands, AI Integration & Group Management
+            </p>
+            <div class="hero-stats animate-slide-up delay-2">
+                <div class="stat-item">
+                    <span class="stat-number" data-count="50">0</span>
+                    <span class="stat-label">Commands</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" data-count="99">0</span>
+                    <span class="stat-label">% Uptime</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" data-count="24">0</span>
+                    <span class="stat-label">/7 Support</span>
+                </div>
+            </div>
+            <div class="hero-cta animate-slide-up delay-3">
+                <button class="btn btn-glow btn-lg" onclick="showRegister()">
+                    Start Free Trial
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </button>
+                <button class="btn btn-outline btn-lg" onclick="scrollToFeatures()">
+                    View Features
+                </button>
+            </div>
+        </div>
+        <div class="hero-visual">
+            <div class="phone-mockup animate-float">
+                <div class="phone-notch"></div>
+                <div class="phone-screen">
+                    <div class="chat-header">
+                        <div class="chat-avatar">🤖</div>
+                        <div class="chat-info">
+                            <div class="chat-name">Wiz AI Pro</div>
+                            <div class="chat-status">Online</div>
+                        </div>
+                    </div>
+                    <div class="chat-messages">
+                        <div class="message bot">
+                            <div class="message-bubble">Hello! I'm Wiz AI Pro 👋</div>
+                            <div class="message-time">12:00</div>
+                        </div>
+                        <div class="message user">
+                            <div class="message-bubble">.tagall Meeting in 5 mins!</div>
+                            <div class="message-time">12:01</div>
+                        </div>
+                        <div class="message bot">
+                            <div class="message-bubble">📢 Tagged 25 members!</div>
+                            <div class="message-time">12:01</div>
+                        </div>
+                    </div>
+                    <div class="chat-input">
+                        <span class="input-text">Type .help for commands...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="floating-cards">
+                <div class="float-card card-1">
+                    <span class="card-icon">🤖</span>
+                    <span>AI Powered</span>
+                </div>
+                <div class="float-card card-2">
+                    <span class="card-icon">⚡</span>
+                    <span>Lightning Fast</span>
+                </div>
+                <div class="float-card card-3">
+                    <span class="card-icon">🔒</span>
+                    <span>Secure</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features" id="features">
+        <h2 class="section-title animate-on-scroll">
+            <span class="gradient-text">Powerful</span> Features
+        </h2>
+        <div class="features-grid">
+            <div class="feature-card animate-on-scroll">
+                <div class="feature-icon-wrapper">
+                    <span class="feature-icon">👥</span>
+                    <div class="icon-glow"></div>
+                </div>
+                <h3>Group Management</h3>
+                <p>Advanced group controls with .tagall, .kick, .promote, antilink, welcome messages & more.</p>
+                <div class="feature-tags">
+                    <span class="tag">50+ Commands</span>
+                    <span class="tag">Admin Tools</span>
+                </div>
+            </div>
+            <div class="feature-card animate-on-scroll">
+                <div class="feature-icon-wrapper">
+                    <span class="feature-icon">🤖</span>
+                    <div class="icon-glow"></div>
+                </div>
+                <h3>AI Integration</h3>
+                <p>DeepSeek AI powered responses. Auto-reply to mentions, smart conversations & summaries.</p>
+                <div class="feature-tags">
+                    <span class="tag">DeepSeek AI</span>
+                    <span class="tag">Auto-Reply</span>
+                </div>
+            </div>
+            <div class="feature-card animate-on-scroll">
+                <div class="feature-icon-wrapper">
+                    <span class="feature-icon">📥</span>
+                    <div class="icon-glow"></div>
+                </div>
+                <h3>Media Downloads</h3>
+                <p>Download from TikTok, Instagram, Facebook, Twitter/X, YouTube without watermarks.</p>
+                <div class="feature-tags">
+                    <span class="tag">No Watermark</span>
+                    <span class="tag">HD Quality</span>
+                </div>
+            </div>
+            <div class="feature-card animate-on-scroll">
+                <div class="feature-icon-wrapper">
+                    <span class="feature-icon">🎭</span>
+                    <div class="icon-glow"></div>
+                </div>
+                <h3>Fun & Games</h3>
+                <p>Jokes, quotes, dice rolls, coin flips, gay checks, ratings & interactive games.</p>
+                <div class="feature-tags">
+                    <span class="tag">Interactive</span>
+                    <span class="tag">Fun</span>
+                </div>
+            </div>
+            <div class="feature-card animate-on-scroll">
+                <div class="feature-icon-wrapper">
+                    <span class="feature-icon">💾</span>
+                    <div class="icon-glow"></div>
+                </div>
+                <h3>View Once Save</h3>
+                <p>Save view-once messages, status downloads, and media recovery features.</p>
+                <div class="feature-tags">
+                    <span class="tag">Privacy</span>
+                    <span class="tag">Save</span>
+                </div>
+            </div>
+            <div class="feature-card animate-on-scroll">
+                <div class="feature-icon-wrapper">
+                    <span class="feature-icon">📊</span>
+                    <div class="icon-glow"></div>
+                </div>
+                <h3>Dashboard & Stats</h3>
+                <p>Beautiful web dashboard to control your bot, view stats, and manage settings.</p>
+                <div class="feature-tags">
+                    <span class="tag">Analytics</span>
+                    <span class="tag">Control</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Commands Preview -->
+    <section class="commands-section" id="commands">
+        <h2 class="section-title animate-on-scroll">
+            <span class="gradient-text">50+</span> Commands
+        </h2>
+        <div class="commands-container">
+            <div class="command-categories">
+                <button class="cat-btn active" data-cat="all">All</button>
+                <button class="cat-btn" data-cat="group">Group</button>
+                <button class="cat-btn" data-cat="ai">AI</button>
+                <button class="cat-btn" data-cat="media">Media</button>
+                <button class="cat-btn" data-cat="fun">Fun</button>
+                <button class="cat-btn" data-cat="utility">Utility</button>
+            </div>
+            <div class="commands-grid" id="commandsGrid">
+                <!-- Commands loaded via JS -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Dashboard (Hidden by default) -->
+    <section class="dashboard hidden" id="dashboard">
+        <div class="dashboard-sidebar">
+            <div class="sidebar-header">
+                <div class="logo-small">⚡ Wiz AI</div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="sidebar-link active" data-page="overview">
+                    <span>📊</span> Overview
+                </a>
+                <a href="#" class="sidebar-link" data-page="whatsapp">
+                    <span>📱</span> WhatsApp
+                </a>
+                <a href="#" class="sidebar-link" data-page="commands">
+                    <span>⌨️</span> Commands
+                </a>
+                <a href="#" class="sidebar-link" data-page="settings">
+                    <span>⚙️</span> Settings
+                </a>
+                <a href="#" class="sidebar-link" data-page="servers">
+                    <span>🖥️</span> Servers
+                </a>
+            </nav>
+        </div>
+        <div class="dashboard-main">
+            <!-- Overview Page -->
+            <div class="page active" id="page-overview">
+                <h2 class="page-title">Dashboard Overview</h2>
+                <div class="stats-cards">
+                    <div class="stat-card">
+                        <div class="stat-icon">📨</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statMessages">0</span>
+                            <span class="stat-label">Messages Processed</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⌨️</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statCommands">0</span>
+                            <span class="stat-label">Commands Used</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">👥</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statGroups">0</span>
+                            <span class="stat-label">Groups Managed</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⏱️</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statUptime">0h</span>
+                            <span class="stat-label">Uptime</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- WhatsApp Page - UPDATED WITH COUNTRY CODE -->
+            <div class="page" id="page-whatsapp">
+                <h2 class="page-title">Connect WhatsApp</h2>
+                <div class="connection-card">
+                    <div class="connection-status" id="connectionStatus">
+                        <div class="status-icon">📴</div>
+                        <div class="status-text">Not Connected</div>
+                    </div>
+                    
+                    <div class="connection-form" id="connectionForm">
+                        <div class="phone-input-wrapper">
+                            <label>Phone Number with Country Code</label>
+                            <div class="phone-input-container">
+                                <select id="countryCode" class="country-select" onchange="updatePhoneExample()">
+                                    <option value="234">🇳🇬 +234 (Nigeria)</option>
+                                    <option value="1">🇺🇸 +1 (USA)</option>
+                                    <option value="44">🇬🇧 +44 (UK)</option>
+                                    <option value="91">🇮🇳 +91 (India)</option>
+                                    <option value="27">🇿🇦 +27 (South Africa)</option>
+                                    <option value="254">🇰🇪 +254 (Kenya)</option>
+                                    <option value="233">🇬🇭 +233 (Ghana)</option>
+                                    <option value="255">🇹🇿 +255 (Tanzania)</option>
+                                    <option value="256">🇺🇬 +256 (Uganda)</option>
+                                    <option value="20">🇪🇬 +20 (Egypt)</option>
+                                    <option value="212">🇲🇦 +212 (Morocco)</option>
+                                    <option value="251">🇪🇹 +251 (Ethiopia)</option>
+                                    <option value="other">🌍 Other</option>
+                                </select>
+                                <input type="tel" id="phoneInput" placeholder="8012345678" maxlength="15">
+                            </div>
+                            <small id="phoneExample">Example: 2348012345678</small>
+                        </div>
+                        <button class="btn btn-primary btn-full" onclick="startPairing()">
+                            <span>🔗 Connect WhatsApp</span>
+                        </button>
+                    </div>
+
+                    <div class="connection-result hidden" id="connectionResult">
+                        <div class="result-tabs">
+                            <button class="result-tab active" onclick="showResultTab('code')">
+                                🔢 Pairing Code
+                            </button>
+                            <button class="result-tab" onclick="showResultTab('qr')">
+                                📷 QR Code
+                            </button>
+                        </div>
+                        
+                        <div class="result-content" id="codeTab">
+                            <div class="code-display-box">
+                                <p class="code-label">Your Pairing Code</p>
+                                <div class="pairing-code" id="pairingCode">------</div>
+                                <div class="countdown" id="countdown">⏱️ Code expires in: 2:00</div>
+                            </div>
+                            
+                            <div class="instructions-box">
+                                <h4>📱 How to Link:</h4>
+                                <ol class="steps-list">
+                                    <li>Open WhatsApp on your phone</li>
+                                    <li>Tap <b>Settings</b> (or ⋮ Menu)</li>
+                                    <li>Select <b>Linked Devices</b></li>
+                                    <li>Tap <b>Link with phone number</b></li>
+                                    <li>Enter the code above ☝️</li>
+                                </ol>
+                            </div>
+                        </div>
+                        
+                        <div class="result-content hidden" id="qrTab">
+                            <div class="qr-wrapper">
+                                <p class="qr-label">Scan with WhatsApp Camera</p>
+                                <div class="qr-container">
+                                    <img id="qrImage" src="" alt="QR Code">
+                                </div>
+                                <p class="qr-hint">Go to WhatsApp → Settings → Linked Devices → Link Device</p>
+                            </div>
+                        </div>
+                        
+                        <div class="connection-progress" id="connectionProgress">
+                            <div class="progress-spinner"></div>
+                            <span id="connectionText">Initializing connection...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Commands Page -->
+            <div class="page" id="page-commands">
+                <h2 class="page-title">Bot Commands</h2>
+                <div class="commands-list" id="dashboardCommands">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+
+            <!-- Settings Page -->
+            <div class="page" id="page-settings">
+                <h2 class="page-title">Bot Settings</h2>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <h4>Auto Reply</h4>
+                            <p>Automatically respond to messages</p>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="settingAutoReply">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <h4>Welcome Message</h4>
+                            <p>Send welcome to new group members</p>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="settingWelcome" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <h4>AI Mode</h4>
+                            <p>AI responds when mentioned</p>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="settingAiMode">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <h4>Auto Read</h4>
+                            <p>Automatically mark messages as read</p>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="settingAutoRead" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+            </div>
+
+            <!-- Servers Page -->
+            <div class="page" id="page-servers">
+                <h2 class="page-title">Server Selection</h2>
+                <div class="servers-grid" id="serversGrid">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Login Modal -->
+    <div class="modal hidden" id="loginModal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModals()">×</button>
+            <h2 class="modal-title">Welcome Back</h2>
+            <form class="auth-form" onsubmit="handleLogin(event)">
+                <div class="input-group">
+                    <label>Username</label>
+                    <input type="text" id="loginUsername" required>
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" id="loginPassword" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-full">Login</button>
+            </form>
+            <p class="auth-switch">Don't have an account? <a href="#" onclick="showRegister()">Register</a></p>
+        </div>
+    </div>
+
+    <!-- Register Modal -->
+    <div class="modal hidden" id="registerModal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModals()">×</button>
+            <h2 class="modal-title">Create Account</h2>
+            <form class="auth-form" onsubmit="handleRegister(event)">
+                <div class="input-group">
+                    <label>Username</label>
+                    <input type="text" id="regUsername" required>
+                </div>
+                <div class="input-group">
+                    <label>Email</label>
+                    <input type="email" id="regEmail" required>
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" id="regPassword" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-full">Create Account</button>
+            </form>
+            <p class="auth-switch">Already have an account? <a href="#" onclick="showLogin()">Login</a></p>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

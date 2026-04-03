@@ -1,0 +1,9 @@
+node_modules/
+.env
+sessions/
+tmp/
+*.log
+.DS_Store
+server.js.backup*
+commands_fixes.js
+server_fixes.js
