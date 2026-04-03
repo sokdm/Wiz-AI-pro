@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:8090/api';
+const API_URL = '/api';
 let currentToken = localStorage.getItem('wizToken');
 let currentUser = null;
 let statusCheckInterval = null;
