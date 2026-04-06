@@ -39,6 +39,7 @@ async function createWhatsAppSession(userId, phoneNumber, res) {
   const sessionId = `wiz_${userId}_${Date.now()}`;
   const sessionDir = `./sessions/${sessionId}`;
   let welcomeSent = false;
+  let handlerSetup = false;
 
   try {
     const existingSession = Array.from(activeSessions.values()).find(s => s.userId === userId);
@@ -67,7 +68,7 @@ async function createWhatsAppSession(userId, phoneNumber, res) {
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 25000,
-      emitOwnEvents: true,
+      emitOwnEvents: false,
       markOnlineOnConnect: true,
       syncFullHistory: false,
       retryRequestDelayMs: 5000,
@@ -117,7 +118,7 @@ async function createWhatsAppSession(userId, phoneNumber, res) {
           if (phoneNumber) {
             sessionData.pairingRequested = true;
             console.log(`[${sessionId}] Requesting pairing code in 5s...`);
-            
+
             setTimeout(async () => {
               try {
                 await requestPairingCode(sock, sessionData, phoneNumber);
@@ -144,13 +145,16 @@ async function createWhatsAppSession(userId, phoneNumber, res) {
           'whatsappSession.connectedAt': new Date()
         });
 
-        // Send welcome message on first connection
         if (!welcomeSent) {
           await sendWelcomeMessage(sock, userId, phoneNumber);
           welcomeSent = true;
         }
-        
-        setupMessageHandler(sock, sessionId, userId);
+
+        if (!handlerSetup) {
+          setupMessageHandler(sock, sessionId, userId);
+          handlerSetup = true;
+          console.log(`[${sessionId}] Message handler setup complete`);
+        }
 
       } else if (connection === 'close') {
         const statusCode = error?.output?.statusCode;
@@ -163,11 +167,11 @@ async function createWhatsAppSession(userId, phoneNumber, res) {
 
         if (statusCode === 515) {
           console.log(`[${sessionId}] Got 515 - recreating...`);
-          
+
           setTimeout(async () => {
             try {
               const { state: newState, saveCreds: newSaveCreds } = await useMultiFileAuthState(sessionDir);
-              
+
               const newSock = makeWASocket({
                 version,
                 logger,
@@ -180,6 +184,7 @@ async function createWhatsAppSession(userId, phoneNumber, res) {
                 connectTimeoutMs: 60000,
                 defaultQueryTimeoutMs: 60000,
                 keepAliveIntervalMs: 25000,
+                emitOwnEvents: false,
                 markOnlineOnConnect: true,
                 syncFullHistory: false
               });
@@ -187,27 +192,29 @@ async function createWhatsAppSession(userId, phoneNumber, res) {
               sessionData.sock = newSock;
               sessionData.status = 'connecting';
               sessionData.isReconnecting = true;
-              
+
               newSock.ev.on('creds.update', newSaveCreds);
-              
+
               newSock.ev.on('connection.update', async (newUpdate) => {
                 const { connection: newConn } = newUpdate;
-                
+
                 if (newConn === 'open') {
                   console.log(`[${sessionId}] ✅ Reconnected!`);
                   sessionData.status = 'connected';
                   await User.findByIdAndUpdate(userId, {
                     'whatsappSession.connected': true
                   });
-                  
-                  // Send welcome on reconnect if not sent before
+
                   if (!welcomeSent) {
                     await sendWelcomeMessage(newSock, userId, phoneNumber);
                     welcomeSent = true;
                   }
-                  
-                  setupMessageHandler(newSock, sessionId, userId);
-                  
+
+                  if (!handlerSetup) {
+                    setupMessageHandler(newSock, sessionId, userId);
+                    handlerSetup = true;
+                  }
+
                 } else if (newConn === 'close') {
                   const newCode = newUpdate.lastDisconnect?.error?.output?.statusCode;
                   if (newCode === DisconnectReason.loggedOut) {

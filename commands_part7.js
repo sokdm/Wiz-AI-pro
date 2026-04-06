@@ -11,6 +11,10 @@ const FormData = require('form-data');
 const TEMP_DIR = path.join(__dirname, 'temp');
 fs.ensureDirSync(TEMP_DIR);
 
+// Store filter words and kick settings per group
+const groupFilters = new Map();
+const filterKickSettings = new Map(); // true = kick, false = just delete
+
 const PIDGIN_RESPONSES = {
   greetings: ['How far!', 'I dey!', 'Wetin dey happen!', 'How your side?', 'I dey hail o!'],
   how_are_you: ['I dey fine, thank God!', 'Body dey inside cloth!', 'We dey manage am!', 'I dey kampe!'],
@@ -35,13 +39,118 @@ function detectIntent(text) {
   return null;
 }
 
+// Check if message contains filter words and handle kick
+async function checkFilterAndKick(sock, msg, groupId, text, sender) {
+  const filters = groupFilters.get(groupId) || [];
+  const shouldKick = filterKickSettings.get(groupId) || false;
+  
+  const lowerText = text.toLowerCase();
+  const hasFilterWord = filters.some(word => lowerText.includes(word.toLowerCase()));
+  
+  if (!hasFilterWord) return false;
+  
+  try {
+    // Get group metadata to check if sender is admin
+    const groupMeta = await getGroupMetadata(sock, groupId);
+    const participant = groupMeta?.participants.find(p => p.id === sender);
+    const isAdmin = participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
+    
+    // Don't punish admins
+    if (isAdmin) {
+      console.log(`Filter word detected from admin ${sender}, ignoring`);
+      return false;
+    }
+    
+    // Delete the message
+    await sock.sendMessage(groupId, { delete: msg.key });
+    
+    if (shouldKick) {
+      // Remove participant from group
+      await sock.groupParticipantsUpdate(groupId, [sender], 'remove');
+      await sock.sendMessage(groupId, {
+        text: `🚫 @${sender.split('@')[0]} used banned words and was kicked!`,
+        mentions: [sender]
+      });
+    } else {
+      // Just warn
+      await sock.sendMessage(groupId, {
+        text: `⚠️ @${sender.split('@')[0]} watch your language! Filtered word detected.`,
+        mentions: [sender]
+      });
+    }
+    return true;
+  } catch (err) {
+    console.error('Filter check error:', err);
+    return false;
+  }
+}
+
+registerCommand('filter', async (sock, msg, args, user) => {
+  const groupId = msg.key.remoteJid;
+  if (!groupId.endsWith('@g.us')) return '❌ This command only works in groups!';
+  
+  const action = args[0]?.toLowerCase();
+  const word = args[1]?.toLowerCase();
+  
+  if (!action) {
+    const currentFilters = groupFilters.get(groupId) || [];
+    const kickMode = filterKickSettings.get(groupId) ? 'ON (Kick)' : 'OFF (Warn only)';
+    return `🛡️ *Word Filter Settings*\n\nStatus: ${currentFilters.length > 0 ? 'Active' : 'Inactive'}\nKick Mode: ${kickMode}\nFiltered words: ${currentFilters.length > 0 ? currentFilters.join(', ') : 'None'}\n\nUsage:\n.filter add <word> - Add word to filter\n.filter remove <word> - Remove word\n.filter list - Show all words\n.filter kick on/off - Auto-kick on filter word\n.filter clear - Remove all filters`;
+  }
+  
+  if (action === 'add' && word) {
+    if (!groupFilters.has(groupId)) groupFilters.set(groupId, []);
+    const filters = groupFilters.get(groupId);
+    if (!filters.includes(word)) {
+      filters.push(word);
+      return `✅ Added "${word}" to filter list.`;
+    }
+    return `⚠️ "${word}" is already filtered.`;
+  }
+  
+  if (action === 'remove' && word) {
+    const filters = groupFilters.get(groupId) || [];
+    const idx = filters.indexOf(word);
+    if (idx > -1) {
+      filters.splice(idx, 1);
+      return `✅ Removed "${word}" from filter list.`;
+    }
+    return `⚠️ "${word}" not found in filter list.`;
+  }
+  
+  if (action === 'list') {
+    const filters = groupFilters.get(groupId) || [];
+    return `🛡️ *Filtered Words:*\n${filters.length > 0 ? filters.map((w, i) => `${i+1}. ${w}`).join('\n') : 'None'}`;
+  }
+  
+  if (action === 'clear') {
+    groupFilters.delete(groupId);
+    return `✅ Cleared all filtered words.`;
+  }
+  
+  if (action === 'kick') {
+    const setting = args[1]?.toLowerCase();
+    if (setting === 'on') {
+      filterKickSettings.set(groupId, true);
+      return `🚫 Auto-kick enabled! Members using filtered words will be removed.`;
+    }
+    if (setting === 'off') {
+      filterKickSettings.set(groupId, false);
+      return `⚠️ Auto-kick disabled. Filtered messages will be deleted with warning.`;
+    }
+    return `❌ Usage: .filter kick on/off`;
+  }
+  
+  return '❌ Unknown action. Use: add, remove, list, clear, kick';
+}, { category: 'group', adminOnly: true });
+
 registerCommand('chatbot', async (sock, msg, args, user) => {
   const groupId = msg.key.remoteJid;
   const action = args[0]?.toLowerCase();
-  
+
   if (!global.chatbotGroups) global.chatbotGroups = new Set();
   if (!global.chatbotCooldown) global.chatbotCooldown = new Map();
-  
+
   if (action === 'on') {
     global.chatbotGroups.add(groupId);
     return '🤖 Chatbot don start for this group! I go dey reply for Nigerian Pidgin.';
@@ -50,7 +159,7 @@ registerCommand('chatbot', async (sock, msg, args, user) => {
     global.chatbotGroups.delete(groupId);
     return '🔇 Chatbot don stop!';
   }
-  
+
   return 'Usage: .chatbot on/off';
 }, { category: 'ai', adminOnly: true });
 
@@ -110,9 +219,9 @@ registerCommand('imagine', async (sock, msg, args, user) => {
     await sock.sendMessage(msg.key.remoteJid, { text: '🎨 Generating... (30-60s)' }, { quoted: msg });
     const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(prompt) + '?width=1024&height=1024&nologo=true&seed=' + Date.now();
     const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
-    
+
     if (!res.data || res.data.length < 1000) throw new Error('Empty response');
-    
+
     await sock.sendMessage(msg.key.remoteJid, {
       image: Buffer.from(res.data),
       caption: '🎨 *Generated Image*\n\nPrompt: ' + prompt
@@ -131,9 +240,9 @@ registerCommand('imaginefast', async (sock, msg, args, user) => {
     await sock.sendMessage(msg.key.remoteJid, { text: '⚡ Generating...' }, { quoted: msg });
     const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(prompt) + '?width=512&height=512&nologo=true&seed=' + Date.now();
     const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 45000 });
-    
+
     if (!res.data || res.data.length < 1000) throw new Error('Empty');
-    
+
     await sock.sendMessage(msg.key.remoteJid, {
       image: Buffer.from(res.data),
       caption: '⚡ *Fast Generated*\n\nPrompt: ' + prompt
@@ -153,7 +262,7 @@ registerCommand('imagineanime', async (sock, msg, args, user) => {
     const animePrompt = 'anime style, ' + prompt + ', high quality, detailed';
     const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(animePrompt) + '?width=1024&height=1024&nologo=true&seed=' + Date.now();
     const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
-    
+
     await sock.sendMessage(msg.key.remoteJid, {
       image: Buffer.from(res.data),
       caption: '🎌 *Anime Style*\n\nPrompt: ' + prompt
@@ -173,7 +282,7 @@ registerCommand('imaginereal', async (sock, msg, args, user) => {
     const realPrompt = 'photorealistic, ' + prompt + ', 8k, detailed, professional photography';
     const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(realPrompt) + '?width=1024&height=1024&nologo=true&seed=' + Date.now();
     const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
-    
+
     await sock.sendMessage(msg.key.remoteJid, {
       image: Buffer.from(res.data),
       caption: '📸 *Photorealistic*\n\nPrompt: ' + prompt
@@ -189,8 +298,8 @@ registerCommand('playvn', async (sock, msg, args, user) => {
   if (!query) return '❌ Usage: .playvn <song name>\nExample: .playvn Burna Boy Last Last';
 
   try {
-    await sock.sendMessage(msg.key.remoteJid, { 
-      text: '🔍 Searching for "' + query + '"...\n\n⏳ This may take 30-60 seconds' 
+    await sock.sendMessage(msg.key.remoteJid, {
+      text: '🔍 Searching for "' + query + '"...\n\n⏳ This may take 30-60 seconds'
     }, { quoted: msg });
 
     // Try Deezer API first
@@ -229,18 +338,17 @@ registerCommand('playvn', async (sock, msg, args, user) => {
       return '❌ No preview available for: ' + track.title + '\n\nTry a different song or use .spotify to find links.';
     }
 
-    await sock.sendMessage(msg.key.remoteJid, { 
-      text: '🎵 Found: ' + track.title + ' by ' + track.artist.name + '\nDownloading 30s preview...' 
+    await sock.sendMessage(msg.key.remoteJid, {
+      text: '🎵 Found: ' + track.title + ' by ' + track.artist.name + '\nDownloading 30s preview...'
     }, { quoted: msg });
 
-    const audioRes = await axios.get(track.preview, { 
+    const audioRes = await axios.get(track.preview, {
       responseType: 'arraybuffer',
       timeout: 30000
     });
-
-    const tempMp3 = path.join(TEMP_DIR, Date.now() + '_preview.mp3');
+const tempMp3 = path.join(TEMP_DIR, Date.now() + '_preview.mp3');
     const tempOgg = path.join(TEMP_DIR, Date.now() + '_preview.ogg');
-    
+
     await fs.writeFile(tempMp3, audioRes.data);
 
     await new Promise((resolve, reject) => {
@@ -253,7 +361,6 @@ registerCommand('playvn', async (sock, msg, args, user) => {
     });
 
     const audioBuffer = await fs.readFile(tempOgg);
-    
     await sock.sendMessage(msg.key.remoteJid, {
       audio: audioBuffer,
       mimetype: 'audio/ogg; codecs=opus',
@@ -279,7 +386,7 @@ registerCommand('dlvn', async (sock, msg, args, user) => {
   try {
     await sock.sendMessage(msg.key.remoteJid, { text: '🔊 Downloading audio...' }, { quoted: msg });
 
-    const res = await axios.get(url, { 
+    const res = await axios.get(url, {
       responseType: 'arraybuffer',
       timeout: 60000,
       maxContentLength: 50 * 1024 * 1024
@@ -287,7 +394,7 @@ registerCommand('dlvn', async (sock, msg, args, user) => {
 
     const tempMp3 = path.join(TEMP_DIR, Date.now() + '.mp3');
     const tempOgg = path.join(TEMP_DIR, Date.now() + '.ogg');
-    
+
     await fs.writeFile(tempMp3, res.data);
 
     await new Promise((resolve, reject) => {
@@ -295,7 +402,7 @@ registerCommand('dlvn', async (sock, msg, args, user) => {
     });
 
     const audioBuffer = await fs.readFile(tempOgg);
-    
+
     await sock.sendMessage(msg.key.remoteJid, {
       audio: audioBuffer,
       mimetype: 'audio/ogg; codecs=opus',
@@ -318,23 +425,21 @@ registerCommand('spotify', async (sock, msg, args, user) => {
 
   try {
     const webUrl = 'https://open.spotify.com/search/' + encodeURIComponent(query);
-    
+
     const itunesRes = await axios.get(
       'https://itunes.apple.com/search?term=' + encodeURIComponent(query) + '&limit=5&media=music',
       { timeout: 10000 }
     );
 
     let text = '🎵 *Spotify Search*\n\nQuery: "' + query + '"\n\n🔗 ' + webUrl + '\n\n';
-    
+
     if (itunesRes.data && itunesRes.data.results && itunesRes.data.results.length > 0) {
       text = text + '*Top Results:*\n\n';
       itunesRes.data.results.slice(0, 3).forEach((track, i) => {
         text = text + (i+1) + '. *' + track.trackName + '*\n   Artist: ' + track.artistName + '\n   Preview: ' + (track.previewUrl ? 'Available (30s)' : 'Not available') + '\n\n';
       });
     }
-
     text = text + '\n💡 *To download:*\n1. Open Spotify/YouTube link\n2. Copy song URL\n3. Use .dlvn <url> if direct link available\n\nOr try: .playvn "' + query + '" for 30s preview';
-
     await sock.sendMessage(msg.key.remoteJid, { text }, { quoted: msg });
     return null;
 
@@ -343,6 +448,7 @@ registerCommand('spotify', async (sock, msg, args, user) => {
   }
 }, { category: 'media' });
 
+// FIXED: .toaudio command - better audio format for WhatsApp voice notes
 registerCommand('toaudio', async (sock, msg, args, user) => {
   const quoted = msg.message?.extendedTextMessage?.contextInfo;
   if (!quoted) return '❌ Reply to a video with .toaudio';
@@ -354,7 +460,7 @@ registerCommand('toaudio', async (sock, msg, args, user) => {
   const tempFiles = [];
 
   try {
-    await sock.sendMessage(msg.key.remoteJid, { text: '🔊 Processing...' }, { quoted: msg });
+    await sock.sendMessage(msg.key.remoteJid, { text: '🔊 Converting to voice note...' }, { quoted: msg });
 
     const buffer = await downloadMediaMessage(
       {
@@ -374,15 +480,28 @@ registerCommand('toaudio', async (sock, msg, args, user) => {
 
     await fs.writeFile(tempVideo, buffer);
 
+    // FIXED: Better ffmpeg settings for WhatsApp voice notes
     await new Promise((resolve, reject) => {
-      ffmpeg(tempVideo).noVideo().audioCodec('libopus').audioBitrate(64).format('ogg').on('end', resolve).on('error', reject).save(tempAudio);
+      ffmpeg(tempVideo)
+        .noVideo()
+        .audioCodec('libopus')
+        .audioBitrate(128) // Increased bitrate for better quality
+        .audioFrequency(48000) // WhatsApp standard frequency
+        .audioChannels(1) // Mono for voice notes
+        .format('ogg')
+        .on('end', resolve)
+        .on('error', reject)
+        .save(tempAudio);
     });
 
     const audioBuffer = await fs.readFile(tempAudio);
+    
+    // FIXED: Send with proper voice note settings
     await sock.sendMessage(msg.key.remoteJid, {
       audio: audioBuffer,
       mimetype: 'audio/ogg; codecs=opus',
-      ptt: true
+      ptt: true, // Voice note format
+      fileName: 'voice_note.ogg'
     }, { quoted: msg });
 
     for (const f of tempFiles) try { await fs.remove(f); } catch {}
@@ -390,6 +509,7 @@ registerCommand('toaudio', async (sock, msg, args, user) => {
 
   } catch (err) {
     for (const f of tempFiles) try { await fs.remove(f); } catch {}
+    console.error('Toaudio error:', err);
     return '❌ Failed: ' + err.message;
   }
 }, { category: 'media' });
@@ -403,7 +523,6 @@ registerCommand('tomp3', async (sock, msg, args, user) => {
   if (!isVideo) return '❌ Not a video!';
 
   const tempFiles = [];
-
   try {
     const buffer = await downloadMediaMessage(
       {
@@ -424,7 +543,8 @@ registerCommand('tomp3', async (sock, msg, args, user) => {
     await new Promise((resolve, reject) => {
       ffmpeg(tempVideo).noVideo().audioCodec('libmp3lame').audioBitrate(128).format('mp3').on('end', resolve).on('error', reject).save(tempMp3);
     });
-const audioBuffer = await fs.readFile(tempMp3);
+
+    const audioBuffer = await fs.readFile(tempMp3);
     await sock.sendMessage(msg.key.remoteJid, {
       document: audioBuffer,
       mimetype: 'audio/mpeg',
@@ -443,12 +563,12 @@ const audioBuffer = await fs.readFile(tempMp3);
 registerCommand('tts', async (sock, msg, args, user) => {
   const lang = args[0] || 'en';
   const text = args.slice(1).join(' ') || 'Hello from Wiz AI Pro';
-  
+
   if (text.length > 200) return '❌ Max 200 characters';
-  
+
   try {
     const url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + encodeURIComponent(text) + '&tl=' + lang + '&client=tw-ob';
-    
+
     const res = await axios.get(url, {
       responseType: 'arraybuffer',
       timeout: 15000,
@@ -467,9 +587,9 @@ registerCommand('tts', async (sock, msg, args, user) => {
       mimetype: 'audio/mp3',
       ptt: true
     }, { quoted: msg });
-    
+
     return null;
-    
+
   } catch (err) {
     try {
       const fallbackUrl = 'https://api.streamelements.com/kappa/v2/speech?voice=Joanna&text=' + encodeURIComponent(text);
@@ -477,13 +597,12 @@ registerCommand('tts', async (sock, msg, args, user) => {
         responseType: 'arraybuffer',
         timeout: 10000
       });
-      
+
       await sock.sendMessage(msg.key.remoteJid, {
         audio: Buffer.from(fallback.data),
         mimetype: 'audio/mp3',
         ptt: true
       }, { quoted: msg });
-      
       return null;
     } catch (fallbackErr) {
       return '❌ TTS failed: ' + err.message;
@@ -495,24 +614,24 @@ registerCommand('remind', async (sock, msg, args, user) => {
   const timeStr = args[0];
   const text = args.slice(1).join(' ');
   if (!timeStr || !text) return '❌ Usage: .remind 30m Check oven\n\nTime: 30s, 5m, 2h, 1d';
-  
+
   const match = timeStr.match(/^(\d+)([smhd])$/);
   if (!match) return '❌ Use: 30s, 5m, 2h, or 1d';
-  
+
   const ms = { s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]] * parseInt(match[1]);
   const userId = msg.key.participant || msg.key.remoteJid;
-  
+
   setTimeout(async () => {
     await sock.sendMessage(userId, { text: '⏰ *REMINDER*\n\n' + text });
   }, ms);
-  
+
   return '⏰ Reminder set for ' + timeStr + '!';
 }, { category: 'utility' });
 
 registerCommand('weather', async (sock, msg, args, user) => {
   const city = args.join(' ');
   if (!city) return '❌ Provide city name';
-  
+
   try {
     const res = await axios.get('https://wttr.in/' + encodeURIComponent(city) + '?format=3', {
       headers: { 'User-Agent': 'curl' },
@@ -527,7 +646,7 @@ registerCommand('weather', async (sock, msg, args, user) => {
 registerCommand('calc', async (sock, msg, args, user) => {
   const expr = args.join(' ');
   if (!expr) return '❌ Usage: .calc 2+2*5';
-  
+
   try {
     const clean = expr.replace(/[^0-9+\-*/.() ]/g, '');
     if (!clean) return '❌ Invalid characters';
@@ -541,7 +660,7 @@ registerCommand('calc', async (sock, msg, args, user) => {
 registerCommand('qr', async (sock, msg, args, user) => {
   const text = args.join(' ');
   if (!text) return '❌ Provide text';
-  
+
   try {
     const res = await axios.get('https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' + encodeURIComponent(text), {
       responseType: 'arraybuffer',
@@ -561,7 +680,7 @@ registerCommand('marry', async (sock, msg, args, user) => {
   const target = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
   if (!target) return '❌ Mention your soulmate!';
   if (target === msg.key.participant) return '❌ You cannot marry yourself!';
-  
+
   return '💍 @' + msg.key.participant.split('@')[0] + ' wants to marry @' + target.split('@')[0] + '!\n\n_' + target.split('@')[0] + ' must reply with .acceptmarry to accept!_';
 }, { category: 'fun' });
 
@@ -573,9 +692,13 @@ registerCommand('divorce', async (sock, msg, args, user) => {
   return '💔 *Divorced!* You are now single again. 😅';
 }, { category: 'fun' });
 
-module.exports = { 
+// Export filter checking function for use in message handler
+module.exports = {
   commands,
   PIDGIN_RESPONSES,
   detectIntent,
-  getRandomResponse
+  getRandomResponse,
+  checkFilterAndKick,
+  groupFilters,
+  filterKickSettings
 };

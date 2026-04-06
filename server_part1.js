@@ -46,13 +46,13 @@ const logger = pino({ level: 'silent' });
 async function handleAIResponse(prompt, context = 'general') {
   try {
     let systemPrompt = 'You are a helpful assistant.';
-    
+
     if (context === 'dm_conversation') {
-      systemPrompt = `You are Wiz AI Pro, a friendly WhatsApp bot assistant. The owner is currently offline. 
-Respond in a casual, warm Nigerian Pidgin English style like "I dey, how your side?" or "Wetin dey happen?". 
+      systemPrompt = `You are Wiz AI Pro, a friendly WhatsApp bot assistant. The owner is currently offline.
+Respond in a casual, warm Nigerian Pidgin English style like "I dey, how your side?" or "Wetin dey happen?".
 Be conversational, use emojis, and let them know the owner will reply soon. Keep responses short and friendly.`;
     }
-    
+
     const response = await axios.post(process.env.DEEPSEEK_API_URL, {
       model: 'deepseek-chat',
       messages: [
@@ -74,51 +74,60 @@ Be conversational, use emojis, and let them know the owner will reply soon. Keep
 
 async function sendWelcomeMessage(sock, userId, phoneNumber) {
   try {
-    // Format phone number properly
     let cleanPhone = phoneNumber.toString().replace(/\D/g, '');
-    
+
     console.log(`[${userId}] Sending welcome to phone:`, cleanPhone);
     console.log(`[${userId}] Socket user ID:`, sock.user?.id);
-    
-    // Try multiple formats
-    const jid = `${cleanPhone}@s.whatsapp.net`;
-    
-    const welcomeText = `╔═══❖•ೋ° °ೋ•❖═══╗
-┃   🤖 *WIZ AI PRO* 🤖
-┃   ✨ Activated ✨
-╚═══❖•ೋ° °ೋ•❖═══╝
 
-🎉 *Congratulations!* Your WhatsApp bot is now connected!
+    const jid = `${cleanPhone}@s.whatsapp.net`;
+
+    const welcomeText = `╔═══════════════════════════╗
+║  🤖 *WIZ AI PRO* 🤖        ║
+║  ⚡ *PREMIUM EDITION* ⚡    ║
+╚═══════════════════════════╝
+
+🎉 *Bot Activated Successfully!*
 
 👑 *Owner:* WISDOM
 📱 *Number:* ${cleanPhone}
 ⏰ *Time:* ${new Date().toLocaleString()}
-🌟 *Status:* ONLINE
+🌟 *Status:* ONLINE ✅
 
-✨ *Your Bot Features:*
-• 50+ Powerful Commands
-• AI Auto-Response (when you're offline)
-• Group Management
-• Media Downloads
-• Anti-Delete & More!
+╔═══════════════════════════╗
+║  📊 *BOT STATISTICS*       ║
+╠═══════════════════════════╣
+║  • 200+ Commands          ║
+║  • 9 Categories           ║
+║  • AI-Powered             ║
+║  • 24/7 Online            ║
+╚═══════════════════════════╝
 
-📢 *Join our Channel for Updates:*
+✨ *FEATURE CATEGORIES:*
+
+👥 *Group Management* (19 cmds)
+🛡️ *Moderation* (8 cmds)
+🤖 *AI & Smart Tools* (7 cmds)
+💰 *Economy System* (8 cmds)
+🎮 *Games* (6 cmds)
+😂 *Fun* (10 cmds)
+🛠️ *Utility* (12 cmds)
+📺 *Media Download* (17 cmds)
+👑 *Owner Only* (5 cmds)
+
+🚀 *QUICK START:*
+Type *.menu* - See all commands
+Type *.help* - Command details
+Type *.ping* - Check status
+
+📢 *Join our Channel:*
 https://whatsapp.com/channel/0029VbCOs0vGU3BI6SYsDf17
 
-Type *.help* to see all commands!
+⚡ _Powered by Wiz AI Pro v2.0_
+🤖 _Your Ultimate WhatsApp Assistant_`;
 
-⚡ _Powered by Wiz AI Pro_`;
-
-    // Send to the owner's number
     await sock.sendMessage(jid, { text: welcomeText });
     console.log(`[${userId}] ✅ Welcome sent to ${jid}`);
-    
-    // Also try sending to the bot's own number as fallback
-    if (sock.user?.id) {
-      const botJid = sock.user.id;
-      await sock.sendMessage(botJid, { text: welcomeText });
-      console.log(`[${userId}] ✅ Welcome also sent to bot ${botJid}`);
-    }
+
   } catch (err) {
     console.error(`[${userId}] Welcome failed:`, err.message);
     console.error(`[${userId}] Error stack:`, err.stack);
