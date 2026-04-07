@@ -20,6 +20,7 @@ async function requestPairingCode(sock, sessionData, phoneNumber) {
     }
 
     console.log(`[${sessionData.userId}] Requesting pairing code for:`, cleanPhone);
+
     const code = await sock.requestPairingCode(cleanPhone);
 
     if (code && code.length >= 6) {
@@ -42,9 +43,11 @@ async function createWhatsAppSession(userId, phoneNumber, res, isReconnect = fal
   const sessionDir = existingSessionDir || `./sessions/${sessionId}`;
   let welcomeSent = false;
   let handlerSetup = false;
+  let heartbeatInterval = null;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 5;
 
   try {
-    // Only cleanup on fresh start, not reconnect
     if (!isReconnect) {
       const existingSession = Array.from(activeSessions.values()).find(s => s.userId === userId);
       if (existingSession) {
@@ -95,18 +98,40 @@ async function createWhatsAppSession(userId, phoneNumber, res, isReconnect = fal
       sessionId: sessionId,
       pairingRequested: false,
       hasConnected: false,
-      sessionDir: sessionDir
+      sessionDir: sessionDir,
+      heartbeatInterval: null
     };
 
     activeSessions.set(sessionId, sessionData);
 
-    // Connection handler
+    const clearTimers = () => {
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+      }
+      if (sessionData.heartbeatInterval) {
+        clearInterval(sessionData.heartbeatInterval);
+        sessionData.heartbeatInterval = null;
+      }
+    };
+
+    const startHeartbeat = () => {
+      clearTimers();
+      heartbeatInterval = setInterval(() => {
+        if (sessionData.status === 'connected' && sock.ws?.readyState === 1) {
+          console.log(`[${sessionId}] Heartbeat: Connection alive at ${new Date().toISOString()}`);
+        } else if (sessionData.status !== 'connected') {
+          clearTimers();
+        }
+      }, 60000);
+      sessionData.heartbeatInterval = heartbeatInterval;
+    };
+
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
       const error = lastDisconnect?.error;
       const statusCode = error?.output?.statusCode;
 
-      // QR Generated - show options
       if (qr && !sessionData.pairingRequested && !state.creds.registered) {
         try {
           const qrData = await QRCode.toDataURL(qr, {
@@ -124,7 +149,6 @@ async function createWhatsAppSession(userId, phoneNumber, res, isReconnect = fal
 
           console.log(`[${sessionId}] QR Code #${sessionData.qrCount} generated`);
 
-          // Request pairing code if phone provided
           if (phoneNumber && !sessionData.pairingRequested) {
             sessionData.pairingRequested = true;
             await requestPairingCode(sock, sessionData, phoneNumber);
@@ -134,11 +158,11 @@ async function createWhatsAppSession(userId, phoneNumber, res, isReconnect = fal
         }
       }
 
-      // Successfully connected
       if (connection === 'open') {
         console.log(`[${sessionId}] ✅ Connected!`);
         sessionData.status = 'connected';
         sessionData.hasConnected = true;
+        reconnectAttempts = 0;
 
         await User.findByIdAndUpdate(userId, {
           'whatsappSession.sessionId': sessionId,
@@ -158,34 +182,29 @@ async function createWhatsAppSession(userId, phoneNumber, res, isReconnect = fal
           console.log(`[${sessionId}] Handler setup complete`);
         }
 
+        startHeartbeat();
       } else if (connection === 'close') {
         console.log(`[${sessionId}] Closed. Code: ${statusCode}, Reason: ${DisconnectReason[statusCode] || 'unknown'}`);
+        
+        clearTimers();
 
-        // 515 Restart Required - recreate socket immediately with same session
         if (statusCode === 515) {
           console.log(`[${sessionId}] 🔄 Restart required, recreating connection...`);
-          
-          // Clean up old socket
           activeSessions.delete(sessionId);
-          
-          // Small delay then reconnect with same session directory
           setTimeout(() => {
             console.log(`[${sessionId}] 🔄 Reconnecting with fresh socket...`);
             createWhatsAppSession(userId, phoneNumber, null, true, sessionDir).catch(err => {
               console.error(`[${sessionId}] Reconnect failed:`, err);
             });
           }, 2000);
-          
           return;
         }
 
-        // Mark disconnected
         sessionData.status = 'disconnected';
         await User.findByIdAndUpdate(userId, {
           'whatsappSession.connected': false
         });
 
-        // Logged out - cleanup
         if (statusCode === DisconnectReason.loggedOut || statusCode === 403) {
           console.log(`[${sessionId}] Logged out`);
           activeSessions.delete(sessionId);
@@ -195,13 +214,39 @@ async function createWhatsAppSession(userId, phoneNumber, res, isReconnect = fal
           return;
         }
 
-        // Timeout - pairing expired
-        if (statusCode === 408) {
-          console.log(`[${sessionId}] ⏰ Pairing timeout! Refresh to get new code.`);
-          activeSessions.delete(sessionId);
+        if (statusCode === 408 || statusCode === DisconnectReason.timedOut) {
+          console.log(`[${sessionId}] ⏰ Connection timeout, attempting reconnect...`);
+          reconnectAttempts++;
+          if (reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
+            setTimeout(() => {
+              console.log(`[${sessionId}] 🔄 Reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`);
+              createWhatsAppSession(userId, phoneNumber, null, true, sessionDir).catch(err => {
+                console.error(`[${sessionId}] Reconnect failed:`, err);
+              });
+            }, 3000 * reconnectAttempts);
+          } else {
+            console.log(`[${sessionId}] Max reconnect attempts reached.`);
+            activeSessions.delete(sessionId);
+          }
           return;
         }
 
+        if (statusCode === 428 || statusCode === DisconnectReason.restartRequired) {
+          console.log(`[${sessionId}] Connection closed, attempting reconnect...`);
+          reconnectAttempts++;
+          if (reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
+            setTimeout(() => {
+              console.log(`[${sessionId}] 🔄 Reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`);
+              createWhatsAppSession(userId, phoneNumber, null, true, sessionDir).catch(err => {
+                console.error(`[${sessionId}] Reconnect failed:`, err);
+              });
+            }, 3000 * reconnectAttempts);
+          } else {
+            console.log(`[${sessionId}] Max reconnect attempts reached.`);
+            activeSessions.delete(sessionId);
+          }
+          return;
+        }
       } else if (connection === 'connecting') {
         console.log(`[${sessionId}] Connecting...`);
         sessionData.status = 'connecting';
@@ -210,7 +255,10 @@ async function createWhatsAppSession(userId, phoneNumber, res, isReconnect = fal
 
     sock.ev.on('creds.update', saveCreds);
 
-    // Send initial response if provided
+    sock.ws?.on('error', (err) => {
+      console.log(`[${sessionId}] Socket error:`, err.message);
+    });
+
     if (res) {
       res.json({
         sessionId,
@@ -221,10 +269,22 @@ async function createWhatsAppSession(userId, phoneNumber, res, isReconnect = fal
 
   } catch (err) {
     console.error('Session creation error:', err);
+    clearTimers();
     if (res) {
       res.status(500).json({ error: 'Failed to create session: ' + err.message });
     }
   }
 }
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err.message);
+  if (err.code !== 'ECONNABORTED' && err.code !== 'ECONNRESET') {
+    process.exit(1);
+  }
+});
 
 module.exports = { createWhatsAppSession, requestPairingCode };
