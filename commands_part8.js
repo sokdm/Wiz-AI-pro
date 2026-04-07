@@ -93,6 +93,107 @@ registerCommand('vv', async (sock, msg, args, user) => {
   }
 }, { category: 'media' });
 
+// ==================== FIXED SAVE COMMAND ====================
+
+registerCommand('save', async (sock, msg, args, user) => {
+  const quoted = msg.message?.extendedTextMessage?.contextInfo;
+  if (!quoted) return '❌ Reply to media with .save';
+  
+  const qMsg = msg.message.extendedTextMessage.contextInfo.quotedMessage;
+  
+  // Check all possible media types
+  const hasImage = qMsg.imageMessage || qMsg.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+  const hasVideo = qMsg.videoMessage || qMsg.extendedTextMessage?.contextInfo?.quotedMessage?.videoMessage;
+  const hasAudio = qMsg.audioMessage || qMsg.extendedTextMessage?.contextInfo?.quotedMessage?.audioMessage;
+  const hasDocument = qMsg.documentMessage || qMsg.extendedTextMessage?.contextInfo?.quotedMessage?.documentMessage;
+  const hasSticker = qMsg.stickerMessage || qMsg.extendedTextMessage?.contextInfo?.quotedMessage?.stickerMessage;
+  
+  // Determine media type
+  let mediaType = null;
+  let actualMsg = qMsg;
+  
+  if (hasImage) {
+    mediaType = 'image';
+    actualMsg = qMsg.imageMessage ? qMsg : { imageMessage: qMsg.extendedTextMessage.contextInfo.quotedMessage.imageMessage };
+  } else if (hasVideo) {
+    mediaType = 'video';
+    actualMsg = qMsg.videoMessage ? qMsg : { videoMessage: qMsg.extendedTextMessage.contextInfo.quotedMessage.videoMessage };
+  } else if (hasAudio) {
+    mediaType = 'audio';
+    actualMsg = qMsg.audioMessage ? qMsg : { audioMessage: qMsg.extendedTextMessage.contextInfo.quotedMessage.audioMessage };
+  } else if (hasDocument) {
+    mediaType = 'document';
+    actualMsg = qMsg.documentMessage ? qMsg : { documentMessage: qMsg.extendedTextMessage.contextInfo.quotedMessage.documentMessage };
+  } else if (hasSticker) {
+    mediaType = 'sticker';
+    actualMsg = qMsg.stickerMessage ? qMsg : { stickerMessage: qMsg.extendedTextMessage.contextInfo.quotedMessage.stickerMessage };
+  }
+  
+  if (!mediaType) {
+    console.log('Save debug - qMsg keys:', Object.keys(qMsg));
+    return '❌ No media found! Make sure you reply to an image, video, audio, or document.';
+  }
+  
+  try {
+    const buffer = await downloadMediaMessage(
+      {
+        key: { 
+          remoteJid: msg.key.remoteJid, 
+          id: quoted.stanzaId, 
+          participant: quoted.participant 
+        },
+        message: actualMsg
+      },
+      'buffer',
+      {},
+      { 
+        logger: { 
+          info: () => {}, 
+          error: () => {}, 
+          debug: () => {}, 
+          warn: () => {}, 
+          trace: () => {}, 
+          fatal: () => {}, 
+          child: () => ({}) 
+        } 
+      }
+    );
+    
+    if (!buffer) return '❌ Failed to download media';
+    
+    const caption = '✅ Media saved and re-sent!';
+    
+    if (mediaType === 'image') {
+      await sock.sendMessage(msg.key.remoteJid, { image: buffer, caption }, { quoted: msg });
+    } else if (mediaType === 'video') {
+      await sock.sendMessage(msg.key.remoteJid, { video: buffer, caption }, { quoted: msg });
+    } else if (mediaType === 'audio') {
+      const isVoice = actualMsg.audioMessage?.ptt || actualMsg.audioMessage?.ptt === true;
+      await sock.sendMessage(msg.key.remoteJid, { 
+        audio: buffer, 
+        mimetype: 'audio/mp4', 
+        ptt: isVoice 
+      }, { quoted: msg });
+    } else if (mediaType === 'document') {
+      const fileName = actualMsg.documentMessage?.fileName || 'saved_file';
+      await sock.sendMessage(msg.key.remoteJid, { 
+        document: buffer, 
+        fileName: fileName,
+        caption: caption
+      }, { quoted: msg });
+    } else if (mediaType === 'sticker') {
+      await sock.sendMessage(msg.key.remoteJid, { 
+        sticker: buffer 
+      }, { quoted: msg });
+    }
+    
+    return null;
+  } catch (err) {
+    console.error('Save error:', err);
+    return '❌ Failed to save media: ' + err.message;
+  }
+}, { category: 'media' });
+
 // ==================== NEW GROUP MANAGEMENT COMMANDS ====================
 
 registerCommand('hidetag', async (sock, msg, args, user) => {
@@ -367,16 +468,14 @@ registerCommand('ai', async (sock, msg, args, user) => {
       timeout: 30000
     });
     
-    
     const reply = response.data.choices[0].message.content;
-    return `🤖 *AI Response:*\n\n${reply}`;
+    return `🤖 AI Response:\n\n${reply}`;
   } catch (err) {
     return '❌ AI service unavailable. Try again later.';
   }
 }, { category: 'ai' });
 
 registerCommand('gpt', async (sock, msg, args, user) => {
-  // Alias for .ai
   return commands['ai'].handler(sock, msg, args, user);
 }, { category: 'ai' });
 
@@ -394,7 +493,7 @@ registerCommand('translate', async (sock, msg, args, user) => {
     });
     
     if (res.data.responseStatus === 200) {
-      return `🌐 *Translation*\n\nFrom: ${text}\nTo (${LANGUAGES[lang] || lang}): ${res.data.responseData.translatedText}`;
+      return `🌐 Translation\n\nFrom: ${text}\nTo (${LANGUAGES[lang] || lang}): ${res.data.responseData.translatedText}`;
     }
     throw new Error('Translation failed');
   } catch (err) {
@@ -425,7 +524,7 @@ registerCommand('summarize', async (sock, msg, args, user) => {
     });
     
     const summary = response.data.choices[0].message.content;
-    return `📝 *Summary:*\n\n${summary}`;
+    return `📝 Summary:\n\n${summary}`;
   } catch (err) {
     return '❌ Summarization failed.';
   }
@@ -447,7 +546,7 @@ registerCommand('anime', async (sock, msg, args, user) => {
 ┃   🎌 ANIME INFO
 ╚═══❖•ೋ° °ೋ•❖═══╝
 
-📺 *${anime.title}*
+📺 ${anime.title}
 ${anime.title_english ? '🌐 ' + anime.title_english : ''}
 
 ⭐ Score: ${anime.score || 'N/A'}
@@ -470,7 +569,7 @@ ${anime.synopsis ? anime.synopsis.substring(0, 300) + '...' : 'No synopsis avail
 registerCommand('daily', async (sock, msg, args, user) => {
   const now = Date.now();
   const lastDaily = user.economy?.lastDaily || 0;
-  const cooldown = 24 * 60 * 60 * 1000; // 24 hours
+  const cooldown = 24 * 60 * 60 * 1000;
   
   if (now - lastDaily < cooldown) {
     const remaining = cooldown - (now - lastDaily);
@@ -484,7 +583,7 @@ registerCommand('daily', async (sock, msg, args, user) => {
   user.economy.lastDaily = now;
   await user.save();
   
-  return `🎁 *Daily Reward!*\n\n💰 You received ₦${reward}!\n💵 Wallet: ₦${user.economy.wallet}`;
+  return `🎁 Daily Reward!\n\n💰 You received ₦${reward}!\n💵 Wallet: ₦${user.economy.wallet}`;
 }, { category: 'economy' });
 
 registerCommand('deposit', async (sock, msg, args, user) => {
@@ -598,10 +697,8 @@ registerCommand('slot', async (sock, msg, args, user) => {
   
   let win = 0;
   if (result[0] === result[1] && result[1] === result[2]) {
-    // Jackpot - all 3 match
     win = bet * (result[0] === '7️⃣' ? 10 : result[0] === '💎' ? 5 : 3);
   } else if (result[0] === result[1] || result[1] === result[2] || result[0] === result[2]) {
-    // 2 match
     win = bet * 1.5;
   }
   
@@ -633,12 +730,12 @@ registerCommand('roulette', async (sock, msg, args, user) => {
   
   if (bullet === trigger) {
     await user.save();
-    return `🔫 *BANG!*\n\n💀 You died and lost ₦${bet}\n💵 Wallet: ₦${user.economy.wallet}`;
+    return `🔫 BANG!\n\n💀 You died and lost ₦${bet}\n💵 Wallet: ₦${user.economy.wallet}`;
   } else {
     const win = bet * 2;
     user.economy.wallet += win;
     await user.save();
-    return `🔫 *CLICK*\n\n😅 You survived!\n🎉 Won ₦${win}\n💵 Wallet: ₦${user.economy.wallet}`;
+    return `🔫 CLICK\n\n😅 You survived!\n🎉 Won ₦${win}\n💵 Wallet: ₦${user.economy.wallet}`;
   }
 }, { category: 'games' });
 
@@ -653,11 +750,10 @@ registerCommand('trivia', async (sock, msg, args, user) => {
   
   const q = questions[Math.floor(Math.random() * questions.length)];
   
-  // Store active trivia
   if (!global.trivia) global.trivia = new Map();
   global.trivia.set(msg.key.remoteJid, q);
   
-  return `🎯 *TRIVIA*\n\n${q.q}\n\nReply with the answer!`;
+  return `🎯 TRIVIA\n\n${q.q}\n\nReply with the answer!`;
 }, { category: 'games' });
 
 registerCommand('tictactoe', async (sock, msg, args, user) => {
@@ -677,11 +773,10 @@ registerCommand('tictactoe', async (sock, msg, args, user) => {
     groupId: groupId
   });
   
-  // Store reference for moves
   if (!global.activeGames) global.activeGames = new Map();
   global.activeGames.set(groupId, gameId);
   
-  return `🎮 *TIC-TAC-TOE*\n\n@${challenger.split('@')[0]} vs @${opponent.split('@')[0]}\n\n${renderBoard(tttGames.get(gameId).board)}\n\n@${challenger.split('@')[0]}'s turn (X)\nUse .move <1-9>`;
+  return `🎮 TIC-TAC-TOE\n\n@${challenger.split('@')[0]} vs @${opponent.split('@')[0]}\n\n${renderBoard(tttGames.get(gameId).board)}\n\n@${challenger.split('@')[0]}'s turn (X)\nUse .move <1-9>`;
 }, { category: 'games' });
 
 registerCommand('move', async (sock, msg, args, user) => {
@@ -703,11 +798,10 @@ registerCommand('move', async (sock, msg, args, user) => {
   const symbol = game.current === game.challenger ? 'X' : 'O';
   game.board[pos] = symbol;
   
-  // Check winner
   const winPatterns = [
-    [0,1,2], [3,4,5], [6,7,8], // rows
-    [0,3,6], [1,4,7], [2,5,8], // cols
-    [0,4,8], [2,4,6] // diagonals
+    [0,1,2], [3,4,5], [6,7,8],
+    [0,3,6], [1,4,7], [2,5,8],
+    [0,4,8], [2,4,6]
   ];
   
   const winner = winPatterns.find(p => 
@@ -717,19 +811,19 @@ registerCommand('move', async (sock, msg, args, user) => {
   if (winner) {
     tttGames.delete(gameId);
     global.activeGames.delete(groupId);
-    return `🎮 *TIC-TAC-TOE*\n\n${renderBoard(game.board)}\n\n🎉 @${player.split('@')[0]} WINS!`;
-  }
-    if (!game.board.includes('')) {
-    tttGames.delete(gameId);
-    global.activeGames.delete(groupId);
-    return `🎮 *TIC-TAC-TOE*\n\n${renderBoard(game.board)}\n\n🤝 DRAW!`;
+    return `🎮 TIC-TAC-TOE\n\n${renderBoard(game.board)}\n\n🎉 @${player.split('@')[0]} WINS!`;
   }
   
-  // Switch turn
+  if (!game.board.includes('')) {
+    tttGames.delete(gameId);
+    global.activeGames.delete(groupId);
+    return `🎮 TIC-TAC-TOE\n\n${renderBoard(game.board)}\n\n🤝 DRAW!`;
+  }
+  
   game.current = game.current === game.challenger ? game.opponent : game.challenger;
   const nextSymbol = game.current === game.challenger ? 'X' : 'O';
   
-  return `🎮 *TIC-TAC-TOE*\n\n${renderBoard(game.board)}\n\n@${game.current.split('@')[0]}'s turn (${nextSymbol})`;
+  return `🎮 TIC-TAC-TOE\n\n${renderBoard(game.board)}\n\n@${game.current.split('@')[0]}'s turn (${nextSymbol})`;
 }, { category: 'games' });
 
 function renderBoard(board) {
@@ -779,7 +873,7 @@ registerCommand('joke', async (sock, msg, args, user) => {
     'What do you call a sleeping dinosaur? A dino-snore!'
   ];
   
-  return `😂 *JOKE*\n\n${jokes[Math.floor(Math.random() * jokes.length)]}`;
+  return `😂 JOKE\n\n${jokes[Math.floor(Math.random() * jokes.length)]}`;
 }, { category: 'fun' });
 
 registerCommand('quote', async (sock, msg, args, user) => {
@@ -812,12 +906,12 @@ registerCommand('quote', async (sock, msg, args, user) => {
 registerCommand('roll', async (sock, msg, args, user) => {
   const sides = parseInt(args[0]) || 6;
   const result = Math.floor(Math.random() * sides) + 1;
-  return `🎲 Rolled a ${sides}-sided die: *${result}*`;
+  return `🎲 Rolled a ${sides}-sided die: ${result}`;
 }, { category: 'fun' });
 
 registerCommand('flip', async (sock, msg, args, user) => {
   const result = Math.random() < 0.5 ? 'Heads' : 'Tails';
-  return `🪙 Coin flip: *${result}*`;
+  return `🪙 Coin flip: ${result}`;
 }, { category: 'fun' });
 
 registerCommand('choose', async (sock, msg, args, user) => {
@@ -825,7 +919,7 @@ registerCommand('choose', async (sock, msg, args, user) => {
   if (options.length < 2) return '❌ Usage: .choose option1, option2, option3';
   
   const choice = options[Math.floor(Math.random() * options.length)];
-  return `🤔 I choose: *${choice}*`;
+  return `🤔 I choose: ${choice}`;
 }, { category: 'fun' });
 
 registerCommand('rate', async (sock, msg, args, user) => {
@@ -931,7 +1025,7 @@ registerCommand('convert', async (sock, msg, args, user) => {
     if (!rate) return '❌ Currency not supported';
     
     const result = (amount * rate).toFixed(2);
-    return `💱 *Currency Conversion*\n\n${amount} ${from} = ${result} ${to}\n📈 Rate: 1 ${from} = ${rate} ${to}`;
+    return `💱 Currency Conversion\n\n${amount} ${from} = ${result} ${to}\n📈 Rate: 1 ${from} = ${rate} ${to}`;
   } catch (err) {
     return '❌ Conversion failed. Try: USD, EUR, GBP, NGN, JPY, etc.';
   }
@@ -945,7 +1039,7 @@ registerCommand('shorten', async (sock, msg, args, user) => {
     const res = await axios.get(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(url)}`, {
       timeout: 15000
     });
-    return `🔗 *URL Shortened*\n\nOriginal: ${url}\nShort: ${res.data}`;
+    return `🔗 URL Shortened\n\nOriginal: ${url}\nShort: ${res.data}`;
   } catch (err) {
     return '❌ Failed to shorten URL';
   }
@@ -961,7 +1055,7 @@ registerCommand('password', async (sock, msg, args, user) => {
     password += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   
-  return `🔐 *Generated Password*\n\n\`${password}\`\n\nLength: ${length} characters\n💾 Save this securely!`;
+  return `🔐 Generated Password\n\n${password}\n\nLength: ${length} characters\n💾 Save this securely!`;
 }, { category: 'utility' });
 
 registerCommand('whois', async (sock, msg, args, user) => {
@@ -972,7 +1066,7 @@ registerCommand('whois', async (sock, msg, args, user) => {
     const res = await axios.get(`https://api.hackertarget.com/whois/?q=${domain}`, {
       timeout: 15000
     });
-    return `🌐 *WHOIS Lookup*\n\n${res.data.substring(0, 2000)}`;
+    return `🌐 WHOIS Lookup\n\n${res.data.substring(0, 2000)}`;
   } catch (err) {
     return '❌ Lookup failed';
   }
@@ -980,7 +1074,6 @@ registerCommand('whois', async (sock, msg, args, user) => {
 
 registerCommand('news', async (sock, msg, args, user) => {
   try {
-    // Using a free news API
     const res = await axios.get('https://newsapi.org/v2/top-headlines?country=us&pageSize=5&apiKey=demo', {
       timeout: 15000
     });
@@ -988,19 +1081,16 @@ registerCommand('news', async (sock, msg, args, user) => {
     if (!res.data.articles?.length) throw new Error('No news');
     
     const headlines = res.data.articles.slice(0, 3).map((a, i) => 
-      `${i+1}. *${a.title}*\n   👤 ${a.source.name}`
+      `${i+1}. ${a.title}\n   👤 ${a.source.name}`
     ).join('\n\n');
     
     return `╔═══❖•ೋ° °ೋ•❖═══╗
 ┃   📰 LATEST NEWS
 ╚═══❖•ೋ° °ೋ•❖═══╝
 
-${headlines}
-
-💡 Use .news <topic> for specific news`;
+${headlines}`;
   } catch (err) {
-    // Fallback to alternative
-    return `📰 *News Unavailable*\n\nTry visiting:\n• https://bbc.com\n• https://cnn.com\n• https://punchng.com`;
+    return `📰 News Unavailable\n\nTry visiting:\n• https://bbc.com\n• https://cnn.com\n• https://punchng.com`;
   }
 }, { category: 'utility' });
 
@@ -1093,52 +1183,10 @@ registerCommand('toimg', async (sock, msg, args, user) => {
   }
 }, { category: 'media' });
 
-registerCommand('save', async (sock, msg, args, user) => {
-  const quoted = msg.message?.extendedTextMessage?.contextInfo;
-  if (!quoted) return '❌ Reply to media with .save';
-  
-  const qMsg = msg.message.extendedTextMessage.contextInfo.quotedMessage;
-  const mediaType = qMsg.imageMessage ? 'image' : 
-                    qMsg.videoMessage ? 'video' : 
-                    qMsg.documentMessage ? 'document' : 
-                    qMsg.audioMessage ? 'audio' : null;
-  
-  if (!mediaType) return '❌ No media found!';
-  
-  try {
-    const buffer = await downloadMediaMessage(
-      {
-        key: { remoteJid: msg.key.remoteJid, id: quoted.stanzaId, participant: quoted.participant },
-        message: qMsg
-      },
-      'buffer',
-      {},
-      { logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {}, trace: () => {}, fatal: () => {}, child: () => ({}) } }
-    );
-    
-    const caption = '✅ Media saved and re-sent!';
-    
-    if (mediaType === 'image') {
-      await sock.sendMessage(msg.key.remoteJid, { image: buffer, caption }, { quoted: msg });
-    } else if (mediaType === 'video') {
-      await sock.sendMessage(msg.key.remoteJid, { video: buffer, caption }, { quoted: msg });
-    } else if (mediaType === 'audio') {
-      await sock.sendMessage(msg.key.remoteJid, { audio: buffer, mimetype: 'audio/mp4', ptt: qMsg.audioMessage.ptt }, { quoted: msg });
-    } else {
-      await sock.sendMessage(msg.key.remoteJid, { document: buffer, fileName: 'saved_file' }, { quoted: msg });
-    }
-    
-    return null;
-  } catch (err) {
-    return '❌ Failed to save media';
-  }
-}, { category: 'media' });
-
 registerCommand('play', async (sock, msg, args, user) => {
   const query = args.join(' ');
   if (!query) return '❌ Usage: .play <song name>';
   
-  // Delegate to playvn
   return commands['playvn'].handler(sock, msg, args, user);
 }, { category: 'media' });
 
@@ -1147,7 +1195,6 @@ registerCommand('ytsearch', async (sock, msg, args, user) => {
   if (!query) return '❌ Usage: .ytsearch <query>';
   
   try {
-    // Using a search API
     const res = await axios.get(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&key=AIzaSyDemoKey&type=video&maxResults=5`, {
       timeout: 15000
     });
@@ -1155,19 +1202,16 @@ registerCommand('ytsearch', async (sock, msg, args, user) => {
     if (!res.data.items?.length) throw new Error('No results');
     
     const videos = res.data.items.map((v, i) => 
-      `${i+1}. *${v.snippet.title}*\n   👤 ${v.snippet.channelTitle}\n   🆔 ${v.id.videoId}`
+      `${i+1}. ${v.snippet.title}\n   👤 ${v.snippet.channelTitle}\n   🆔 ${v.id.videoId}`
     ).join('\n\n');
     
     return `╔═══❖•ೋ° °ೋ•❖═══╗
 ┃   🎬 YOUTUBE SEARCH
 ╚═══❖•ೋ° °ೋ•❖═══╝
 
-${videos}
-
-💡 Use .ytmp3 <videoId> to download audio`;
+${videos}`;
   } catch (err) {
-    // Fallback
-    return `🔍 *YouTube Search*\n\nhttps://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    return `🔍 YouTube Search\n\nhttps://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
   }
 }, { category: 'media' });
 
@@ -1213,7 +1257,7 @@ registerCommand('lyrics', async (sock, msg, args, user) => {
 ┃   🎵 LYRICS
 ╚═══❖•ೋ° °ೋ•❖═══╝
 
-*${query}*
+${query}
 
 ${lyrics}${res.data.lyrics?.length > 1500 ? '\n\n... (truncated)' : ''}`;
   } catch (err) {
@@ -1225,7 +1269,7 @@ registerCommand('pinterest', async (sock, msg, args, user) => {
   const query = args.join(' ');
   if (!query) return '❌ Usage: .pinterest <search>';
   
-  return `🔍 *Pinterest Search*\n\nhttps://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
+  return `🔍 Pinterest Search\n\nhttps://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`;
 }, { category: 'media' });
 
 // ==================== OWNER ONLY COMMANDS ====================
@@ -1234,7 +1278,6 @@ registerCommand('broadcast', async (sock, msg, args, user) => {
   const message = args.join(' ');
   if (!message) return '❌ Usage: .broadcast <message>';
   
-  // Get owner phone from user session
   const ownerPhone = user.whatsappSession?.phone?.toString().replace(/\D/g, '');
   const senderPhone = (msg.key.participant || msg.key.remoteJid).split('@')[0].split(':')[0];
   
@@ -1250,7 +1293,7 @@ registerCommand('broadcast', async (sock, msg, args, user) => {
         text: `╔═══❖•ೋ° °ೋ•❖═══╗\n┃   📢 BROADCAST\n╚═══❖•ೋ° °ೋ•❖═══╝\n\n${message}\n\n👑 _Wiz AI Pro_`
       });
       sent++;
-      await new Promise(r => setTimeout(r, 1000)); // Delay to avoid rate limit
+      await new Promise(r => setTimeout(r, 1000));
     } catch (e) {}
   }
   
@@ -1261,7 +1304,6 @@ registerCommand('setpp', async (sock, msg, args, user) => {
   const quoted = msg.message?.extendedTextMessage?.contextInfo;
   if (!quoted) return '❌ Reply to an image with .setpp';
   
-  // Check owner
   const ownerPhone = user.whatsappSession?.phone?.toString().replace(/\D/g, '');
   const senderPhone = (msg.key.participant || msg.key.remoteJid).split('@')[0].split(':')[0];
   if (senderPhone !== ownerPhone) return '❌ Owner only command!';
@@ -1279,7 +1321,8 @@ registerCommand('setpp', async (sock, msg, args, user) => {
       {},
       { logger: { info: () => {}, error: () => {}, debug: () => {}, warn: () => {}, trace: () => {}, fatal: () => {}, child: () => ({}) } }
     );
-        await sock.updateProfilePicture(sock.user.id, buffer);
+    
+    await sock.updateProfilePicture(sock.user.id, buffer);
     return '✅ Profile picture updated!';
   } catch (err) {
     return '❌ Failed to update profile picture';
@@ -1290,7 +1333,6 @@ registerCommand('block', async (sock, msg, args, user) => {
   const target = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
   if (!target) return '❌ Mention user to block';
   
-  // Check owner
   const ownerPhone = user.whatsappSession?.phone?.toString().replace(/\D/g, '');
   const senderPhone = (msg.key.participant || msg.key.remoteJid).split('@')[0].split(':')[0];
   if (senderPhone !== ownerPhone) return '❌ Owner only command!';
@@ -1303,7 +1345,6 @@ registerCommand('unblock', async (sock, msg, args, user) => {
   const target = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
   if (!target) return '❌ Mention user to unblock';
   
-  // Check owner
   const ownerPhone = user.whatsappSession?.phone?.toString().replace(/\D/g, '');
   const senderPhone = (msg.key.participant || msg.key.remoteJid).split('@')[0].split(':')[0];
   if (senderPhone !== ownerPhone) return '❌ Owner only command!';
@@ -1313,7 +1354,6 @@ registerCommand('unblock', async (sock, msg, args, user) => {
 }, { category: 'owner', ownerOnly: true });
 
 registerCommand('stats', async (sock, msg, args, user) => {
-  // Check owner
   const ownerPhone = user.whatsappSession?.phone?.toString().replace(/\D/g, '');
   const senderPhone = (msg.key.participant || msg.key.remoteJid).split('@')[0].split(':')[0];
   if (senderPhone !== ownerPhone) return '❌ Owner only command!';
@@ -1338,72 +1378,64 @@ registerCommand('stats', async (sock, msg, args, user) => {
 💾 Memory: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB
 📅 Commands: ${Object.keys(commands).length}+
 
-🤖 Wiz AI Pro v2.0`;
+🤖 Wiz AI Pro v3.0`;
 }, { category: 'owner', ownerOnly: true });
 
-// ==================== NEW MENU COMMAND ====================
+// ==================== UPDATED MENU COMMAND ====================
 
 registerCommand('menu', async (sock, msg, args, user) => {
-  // Get owner phone from user's session
   const ownerPhone = user.whatsappSession?.phone?.toString().replace(/\D/g, '');
   const senderPhone = (msg.key.participant || msg.key.remoteJid).split('@')[0].split(':')[0];
   const isOwner = senderPhone === ownerPhone;
   
   const categories = {
-    '👥 GROUP': ['tagall', 'hidetag', 'kick', 'add', 'promote', 'demote', 'setname', 'setdesc', 'groupinfo', 'link', 'revoke', 'antilink', 'welcome', 'goodbye', 'mute', 'unmute', 'delete', 'tagadmin', 'everyone'],
-    '🛡️ MODERATION': ['warn', 'unwarn', 'warnings', 'ban', 'unban', 'banlist', 'filter', 'antispam'],
-    '🤖 AI & TOOLS': ['ai', 'gpt', 'imagine', 'imaginefast', 'imagineanime', 'imaginereal', 'translate', 'summarize', 'chatbot', 'remind', 'ocr', 'tts', 'anime'],
-    '💰 ECONOMY': ['balance', 'daily', 'deposit', 'withdraw', 'transfer', 'top', 'level', 'leaderboard'],
-    '🎮 GAMES': ['slot', 'roulette', 'trivia', 'tictactoe', 'move', 'rps'],
-    '😂 FUN': ['joke', 'quote', 'roll', 'flip', 'choose', 'rate', 'gaycheck', 'marry', 'acceptmarry', 'divorce'],
-    '🛠️ UTILITY': ['ping', 'uptime', 'serverinfo', 'calc', 'convert', 'qr', 'shorten', 'password', 'whois', 'weather', 'news', 'crypto'],
-    '📺 MEDIA': ['sticker', 'toimg', 'vv', 'save', 'play', 'playvn', 'ytsearch', 'tiktok', 'ig', 'fb', 'x', 'lyrics', 'spotify', 'pinterest', 'dlvn', 'toaudio', 'tomp3'],
-    '👑 OWNER': isOwner ? ['broadcast', 'setpp', 'block', 'unblock', 'stats'] : []
+    '👥 GROUP MGMT (19)': ['tagall', 'hidetag', 'kick', 'add', 'promote', 'demote', 'setname', 'setdesc', 'groupinfo', 'link', 'revoke', 'antilink', 'welcome', 'goodbye', 'mute', 'unmute', 'delete', 'tagadmin', 'everyone'],
+    '🛡️ MODERATION (8)': ['warn', 'unwarn', 'warnings', 'ban', 'unban', 'banlist', 'filter', 'antispam'],
+    '🤖 AI TOOLS (7)': ['ai', 'gpt', 'imagine', 'imaginefast', 'imagineanime', 'imaginereal', 'translate', 'summarize', 'chatbot', 'remind', 'ocr', 'tts', 'anime', 'code', 'fix', 'explain'],
+    '💰 ECONOMY (8)': ['balance', 'daily', 'deposit', 'withdraw', 'transfer', 'top', 'level', 'leaderboard', 'rob', 'work', 'crime', 'slut'],
+    '🎮 GAMES (9)': ['slot', 'roulette', 'trivia', 'tictactoe', 'move', 'rps', 'blackjack', 'hangman', 'guess'],
+    '😂 FUN (15)': ['joke', 'quote', 'roll', 'flip', 'choose', 'rate', 'gaycheck', 'marry', 'acceptmarry', 'divorce', 'ship', '8ball', 'meme', 'fact', 'roast', 'compliment'],
+    '🛠️ UTILITY (18)': ['ping', 'uptime', 'serverinfo', 'calc', 'convert', 'qr', 'shorten', 'password', 'whois', 'weather', 'news', 'crypto', 'bin', 'ip', 'github', 'define', 'movie', 'npm'],
+    '📺 MEDIA (20)': ['sticker', 'toimg', 'vv', 'save', 'play', 'playvn', 'ytsearch', 'tiktok', 'ig', 'fb', 'x', 'lyrics', 'spotify', 'pinterest', 'dlvn', 'toaudio', 'tomp3', 'audiomeme', 'text2img'],
+    '👑 OWNER (8)': isOwner ? ['broadcast', 'setpp', 'block', 'unblock', 'stats', 'exec', 'eval', 'restart'] : []
   };
   
-  let menuText = `╔═══════════════════════════╗
-║  🤖 *WIZ AI PRO* 🤖        ║
-║  ⚡ *PREMIUM EDITION* ⚡    ║
-╚═══════════════════════════╝
+  let menuText = `╔══════════════════════════════════╗
+║  🤖 WIZ AI PRO ULTRA 🤖          ║
+║  ⚡ 250+ COMMANDS ⚡              ║
+║  🌟 VERSION 3.0 PREMIUM 🌟       ║
+╚══════════════════════════════════╝
 
-👑 Owner: WISDOM
-📱 Status: ONLINE ⚡
-🌟 Version: 2.0 Premium
-
-╔═══════════════════════════╗
-║  📊 *BOT STATISTICS*       ║
-╠═══════════════════════════╣
-║  • 200+ Commands          ║
-║  • 9 Categories           ║
-║  • AI-Powered             ║
-║  • 24/7 Online            ║
-╚═══════════════════════════╝
+👑 Owner: ${user.username || 'WISDOM'}
+📱 Status: ONLINE ✅
+🤖 Smart AI: Enabled
+🔄 Auto-Reply: 4 messages max
 
 `;
   
   for (const [cat, cmds] of Object.entries(categories)) {
     if (cmds.length === 0) continue;
-    menuText += `\n*${cat}*\n`;
-    menuText += cmds.map(c => `• .${c}`).join('\n');
+    menuText += `\n${cat}\n`;
+    menuText += cmds.map(c => `• .${c}`).join('  ');
     menuText += '\n';
   }
   
-  menuText += `\n📢 *Join Channel:*
-https://whatsapp.com/channel/0029VbCOs0vGU3BI6SYsDf17
+  menuText += `\n📢 Channel: https://whatsapp.com/channel/0029VbCOs0vGU3BI6SYsDf17
 
-⚡ _Powered by Wiz AI Pro_
-💡 Use .help <command> for details`;
+⚡ Powered by Wiz AI Pro v3.0
+💡 Use .help <command> for details
+🤖 Smart bot that knows when to stop!`;
   
   return menuText;
 }, { category: 'info' });
 
-// Export owner status for DM auto-reply control
+// Export owner status
 module.exports = {
   ownerStatusMap,
   isOwnerOnline: (userId) => {
     const status = ownerStatusMap.get(userId);
     if (!status) return false;
-    return Date.now() - status.lastActivity < 5 * 60 * 1000; // 5 minutes
+    return Date.now() - status.lastActivity < 5 * 60 * 1000;
   },
   updateOwnerActivity: (userId, phone) => {
     ownerStatusMap.set(userId, {

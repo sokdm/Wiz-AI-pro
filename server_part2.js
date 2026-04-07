@@ -1,4 +1,4 @@
-const { handleAIResponse, sendWelcomeMessage, activeSessions } = require('./server_part1');
+const { handleAIResponse, sendStreamResponse, sendWelcomeMessage, activeSessions } = require('./server_part1');
 const User = require('./models/User');
 const { commands, antilinkGroups, welcomeGroups, goodbyeGroups, getGroupMetadata, reply, antispamGroups, spamTracker, isBanned, getWarnings, filters } = require('./commands');
 const { PIDGIN_RESPONSES, detectIntent, getRandomResponse, checkFilterAndKick } = require('./commands_part7');
@@ -7,10 +7,14 @@ const userAIContexts = new Map();
 const userLastResponseTime = new Map();
 const chatbotCooldown = new Map();
 
-// Track owner online status per user (bot instance)
-// Key: userId (MongoDB ID), Value: { lastActivity: timestamp, isOnline: boolean }
+// Smart DM reply tracking per user
+const dmReplyTracker = new Map();
+const MAX_DM_REPLIES = 4;
+const DM_COOLDOWN = 30 * 60 * 1000;
+
+// Owner presence tracking per bot instance
 const ownerStatusMap = new Map();
-const OWNER_OFFLINE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+const OWNER_OFFLINE_TIMEOUT = 5 * 60 * 1000;
 
 function checkSpam(groupId, userId) {
   if (!antispamGroups.has(groupId)) return false;
@@ -41,41 +45,66 @@ function checkFilter(groupId, text) {
   return groupFilters.some(word => lowerText.includes(word));
 }
 
-function isOwnerOnline(userId, ownerPhone) {
+function isOwnerOnline(userId) {
   const status = ownerStatusMap.get(userId);
-  if (!status) return false; // Default to offline if no activity recorded
-  
-  // Check if owner phone matches sender
+  if (!status) return false;
   return Date.now() - status.lastActivity < OWNER_OFFLINE_TIMEOUT;
 }
 
-function updateOwnerActivity(userId, senderPhone) {
+function updateOwnerActivity(userId, phone) {
   ownerStatusMap.set(userId, {
     lastActivity: Date.now(),
-    senderPhone: senderPhone
+    phone: phone
   });
 }
+
+function getDMTracker(userId) {
+  if (!dmReplyTracker.has(userId)) {
+    dmReplyTracker.set(userId, {
+      count: 0,
+      lastReply: 0,
+      hasWarned: false
+    });
+  }
+  return dmReplyTracker.get(userId);
+}
+
+function resetDMTracker(userId) {
+  dmReplyTracker.delete(userId);
+}
+
+// ==================== MESSAGE HANDLER SETUP ====================
 
 function setupMessageHandler(sock, sessionId, userId) {
   console.log(`[${sessionId}] Setting up handlers...`);
 
-  // Auto-reconnect ping every 30 seconds to keep connection alive
+  let ownerPhone = null;
+  let ownerName = 'Wisdom';
+
+  User.findById(userId).then(user => {
+    if (user) {
+      ownerPhone = user.whatsappSession?.phone?.toString().replace(/\D/g, '');
+      ownerName = user.username || 'Wisdom';
+    }
+  });
+
+  // Keep-alive ping every 30 seconds (WhatsApp heartbeat)
   const keepAliveInterval = setInterval(() => {
     if (sock.user) {
       sock.sendPresenceUpdate('available');
-      console.log(`[${sessionId}] Keep-alive ping`);
     } else {
       clearInterval(keepAliveInterval);
     }
   }, 30000);
 
-  // Get user data to find owner phone
-  let ownerPhone = null;
-  User.findById(userId).then(user => {
-    if (user && user.whatsappSession && user.whatsappSession.phone) {
-      ownerPhone = user.whatsappSession.phone.toString().replace(/\D/g, '');
+  // Additional heartbeat every minute for logging
+  const heartbeatInterval = setInterval(() => {
+    if (sock.user) {
+      console.log(`[${sessionId}] Heartbeat: Connection alive at ${new Date().toISOString()}`);
+    } else {
+      clearInterval(heartbeatInterval);
     }
-  });
+  }, 60000);
 
   sock.ev.on('messages.upsert', async (m) => {
     const msg = m.messages[0];
@@ -85,30 +114,17 @@ function setupMessageHandler(sock, sessionId, userId) {
     const remoteJid = msg.key.remoteJid;
     const sender = msg.key.participant || msg.key.remoteJid;
     const isGroup = remoteJid.endsWith('@g.us');
-
-    // Extract sender phone number
     const senderPhone = sender.split('@')[0].split(':')[0];
 
-    // Track owner activity for this specific bot instance
+    // Track owner activity
     if (ownerPhone && senderPhone === ownerPhone) {
       updateOwnerActivity(userId, senderPhone);
-      console.log(`[${sessionId}] Owner ${senderPhone} is active`);
+      resetDMTracker(remoteJid);
+      console.log(`[${sessionId}] Owner ${ownerName} is active`);
     }
-
-    // DEBUG LOG
-    console.log(`[${sessionId}] 📩 MESSAGE:`, {
-      text: messageText.substring(0, 40),
-      sender: sender,
-      isGroup: isGroup,
-      fromMe: msg.key.fromMe,
-      botId: sock.user?.id,
-      ownerPhone: ownerPhone,
-      senderPhone: senderPhone
-    });
 
     // Skip bot's own welcome messages
     if (msg.key.fromMe === true && messageText.startsWith('╔═══❖')) {
-      console.log(`[${sessionId}] Skipping - bot's own welcome message`);
       return;
     }
 
@@ -116,70 +132,55 @@ function setupMessageHandler(sock, sessionId, userId) {
 
     try {
       const user = await User.findById(userId);
-      if (!user) {
-        console.log(`[${sessionId}] ❌ User not found:`, userId);
-        return;
-      }
-
-      // Update owner phone if not set
-      if (!ownerPhone && user.whatsappSession?.phone) {
-        ownerPhone = user.whatsappSession.phone.toString().replace(/\D/g, '');
-      }
+      if (!user) return;
 
       if (user.botSettings.autoRead) {
         await sock.readMessages([msg.key]);
       }
 
-      // Check ban status (groups only)
-      if (isGroup && isBanned(remoteJid, sender)) {
-        try { await sock.sendMessage(remoteJid, { delete: msg.key }); } catch {}
-        return;
-      }
+      // Group moderation checks
+      if (isGroup) {
+        if (isBanned(remoteJid, sender)) {
+          try { await sock.sendMessage(remoteJid, { delete: msg.key }); } catch {}
+          return;
+        }
 
-      // Check antispam (groups only)
-      if (isGroup && checkSpam(remoteJid, sender)) {
-        try {
-          await sock.sendMessage(remoteJid, { delete: msg.key });
-          await reply(sock, remoteJid, `🚫 @${sender.split('@')[0]} don send too many messages! Cool down.`, msg);
-        } catch {}
-        return;
-      }
+        if (checkSpam(remoteJid, sender)) {
+          try {
+            await sock.sendMessage(remoteJid, { delete: msg.key });
+            await reply(sock, remoteJid, `🚫 @${sender.split('@')[0]} don send too many messages! Cool down.`, msg);
+          } catch {}
+          return;
+        }
 
-      // Check filter words with auto-kick (groups only)
-      if (isGroup && messageText) {
         const wasKicked = await checkFilterAndKick(sock, msg, remoteJid, messageText, sender);
         if (wasKicked) return;
-      }
 
-      // Check word filter (groups only) - legacy check
-      if (isGroup && checkFilter(remoteJid, messageText)) {
-        const groupMeta = await getGroupMetadata(sock, remoteJid);
-        const participant = groupMeta?.participants.find(p => p.id === sender);
-        const isSenderAdmin = participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
+        if (checkFilter(remoteJid, messageText)) {
+          const groupMeta = await getGroupMetadata(sock, remoteJid);
+          const participant = groupMeta?.participants.find(p => p.id === sender);
+          const isSenderAdmin = participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
 
-        if (!isSenderAdmin) {
-          await sock.sendMessage(remoteJid, { delete: msg.key });
-          await reply(sock, remoteJid, `🚫 @${sender.split('@')[0]} watch your language!`, msg);
-          return;
+          if (!isSenderAdmin) {
+            await sock.sendMessage(remoteJid, { delete: msg.key });
+            await reply(sock, remoteJid, `🚫 @${sender.split('@')[0]} watch your language!`, msg);
+            return;
+          }
         }
       }
 
-      // Handle commands - WORKS IN BOTH DMs AND GROUPS
+      // Handle commands
       if (messageText.startsWith('.')) {
         const args = messageText.slice(1).trim().split(' ');
         const cmd = args.shift().toLowerCase();
 
-        console.log(`[${sessionId}] 📝 Command received: .${cmd} from ${isGroup ? 'group' : 'DM'}`);
-
         if (commands[cmd]) {
           try {
-            // Check if group-only command is used in DM
             if (commands[cmd].category === 'group' && !isGroup) {
               await reply(sock, remoteJid, '❌ This command only works in groups!', msg);
               return;
             }
 
-            // Check owner only - compare sender to bot owner's phone
             if (commands[cmd].ownerOnly) {
               const isOwner = senderPhone === ownerPhone;
               if (!isOwner) {
@@ -189,18 +190,19 @@ function setupMessageHandler(sock, sessionId, userId) {
             }
 
             const result = await commands[cmd].handler(sock, msg, args, user);
-            if (result) await reply(sock, remoteJid, result, msg);
+            if (result) {
+              await sendStreamResponse(sock, remoteJid, result, msg);
+            }
 
-            // Add XP for using commands
+            // Add XP
             if (!user.stats) user.stats = {};
             if (!user.stats.xp) user.stats.xp = 0;
             user.stats.xp += 10;
             user.stats.commandsUsed = (user.stats.commandsUsed || 0) + 1;
             await user.save();
-            
-            console.log(`[${sessionId}] ✅ Command .${cmd} executed successfully`);
+
           } catch (err) {
-            console.error(`[${sessionId}] ❌ Command ${cmd} error:`, err);
+            console.error(`[${sessionId}] Command ${cmd} error:`, err);
             await reply(sock, remoteJid, '❌ Command failed: ' + err.message, msg);
           }
         } else {
@@ -209,7 +211,7 @@ function setupMessageHandler(sock, sessionId, userId) {
         return;
       }
 
-      // CHATBOT HANDLER (NIGERIAN PIDGIN) - Groups only
+      // Group chatbot
       if (isGroup && global.chatbotGroups && global.chatbotGroups.has(remoteJid) && !messageText.startsWith('.')) {
         if (sender === sock.user.id) return;
 
@@ -223,48 +225,67 @@ function setupMessageHandler(sock, sessionId, userId) {
 
         if (shouldRespond) {
           chatbotCooldown.set(cooldownKey, Date.now());
-
           const intent = detectIntent(messageText);
           let response = intent ? getRandomResponse(intent) : getRandomResponse('confused');
-
-          if (messageText.toLowerCase().includes('?')) {
-            response += '\n\nYou dey ask question? I go try answer!';
-          }
-
           await reply(sock, remoteJid, `🤖 ${response}`, msg);
         }
       }
 
-      // AI Auto-response in DMs - ONLY WHEN OWNER IS OFFLINE
+      // SMART DM AUTO-REPLY
       if (!isGroup && !msg.key.fromMe && user.botSettings.aiMode && !messageText.startsWith('.')) {
-        const ownerOnline = isOwnerOnline(userId, ownerPhone);
-        
-        if (ownerOnline) {
-          console.log(`[${sessionId}] Owner is online, skipping AI reply`);
+        // Check if owner is online
+        if (isOwnerOnline(userId)) {
+          console.log(`[${sessionId}] Owner ${ownerName} is online, skipping AI reply`);
           return;
         }
-        
-        console.log(`[${sessionId}] 🤖 Owner offline, AI DM response triggered`);
-        const now = Date.now();
-        const lastResponse = userLastResponseTime.get(userId) || 0;
 
-        if (now - lastResponse > 5000) {
-          const context = (now - lastResponse < 300000) ? 'dm_conversation' : 'general';
-          const aiResponse = await handleAIResponse(messageText, context);
-          await reply(sock, remoteJid, `🤖 ${aiResponse}`, msg);
-          userLastResponseTime.set(userId, now);
+        const tracker = getDMTracker(remoteJid);
+        const now = Date.now();
+
+        // Reset if cooldown passed
+        if (now - tracker.lastReply > DM_COOLDOWN) {
+          tracker.count = 0;
+          tracker.hasWarned = false;
         }
+
+        // Check if we've reached the limit
+        if (tracker.count >= MAX_DM_REPLIES) {
+          if (!tracker.hasWarned) {
+            tracker.hasWarned = true;
+            await sock.sendMessage(remoteJid, {
+              text: `Hey! 👋 I've replied a few times, but I'm just a bot. ${ownerName} will reply personally when they're back online. Thanks for your patience! 🙏`
+            });
+          }
+          console.log(`[${sessionId}] DM reply limit reached for ${remoteJid}`);
+          return;
+        }
+
+        // Send AI response
+        tracker.count++;
+        tracker.lastReply = now;
+        console.log(`[${sessionId}] DM reply ${tracker.count}/${MAX_DM_REPLIES} for ${remoteJid}`);
+
+        const context = tracker.count > 2 ? 'dm_conversation' : 'general';
+        const aiResponse = await handleAIResponse(messageText, context, ownerName);
+
+        // Add friendly note on first reply
+        let finalResponse = aiResponse;
+        if (tracker.count === 1) {
+          finalResponse = `${aiResponse}\n\n_P.S. I'm just a bot helping out while ${ownerName} is away. They'll reply soon!_ 🤖`;
+        }
+
+        await sendStreamResponse(sock, remoteJid, finalResponse, msg);
       }
 
       // AI when mentioned in groups
       if (isGroup && user.botSettings.aiMode &&
           msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.includes(sock.user.id) &&
           !messageText.startsWith('.')) {
-        const aiResponse = await handleAIResponse(messageText.replace(/@\d+/g, '').trim());
-        await reply(sock, remoteJid, `🤖 ${aiResponse}`, msg);
+        const aiResponse = await handleAIResponse(messageText.replace(/@\d+/g, '').trim(), 'general', ownerName);
+        await sendStreamResponse(sock, remoteJid, `🤖 ${aiResponse}`, msg);
       }
 
-      // Antilink (groups only)
+      // Antilink
       if (isGroup && antilinkGroups.has(remoteJid) && messageText.includes('http')) {
         const groupMeta = await getGroupMetadata(sock, remoteJid);
         const participant = groupMeta?.participants.find(p => p.id === sender);
@@ -322,12 +343,15 @@ function setupMessageHandler(sock, sessionId, userId) {
     }
   });
 
-  // Presence update handler to track owner
+  // Presence update
   sock.ev.on('presence.update', async (update) => {
     const phoneFromPresence = update.id.split('@')[0].split(':')[0];
     if (ownerPhone && phoneFromPresence === ownerPhone) {
-      updateOwnerActivity(userId, ownerPhone);
-      console.log(`[${sessionId}] Owner presence update: online`);
+      if (update.presences[update.id]?.lastKnownPresence === 'available') {
+        updateOwnerActivity(userId, ownerPhone);
+        resetDMTracker(update.id);
+        console.log(`[${sessionId}] Owner ${ownerName} came online`);
+      }
     }
   });
 }

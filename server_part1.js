@@ -9,10 +9,6 @@ const path = require('path');
 const fs = require('fs-extra');
 const pino = require('pino');
 const axios = require('axios');
-const cheerio = require('cheerio');
-const FormData = require('form-data');
-const ytdl = require('@distube/ytdl-core');
-const { pipeline } = require('stream/promises');
 require('dotenv').config();
 
 const User = require('./models/User');
@@ -20,6 +16,11 @@ const { commands, antilinkGroups, welcomeGroups, goodbyeGroups, getGroupMetadata
 
 const app = express();
 const activeSessions = new Map();
+
+// Store active sockets for monitoring
+const activeSockets = new Map();
+
+// ==================== MIDDLEWARE SETUP ====================
 
 app.use(cors());
 app.use(express.json());
@@ -43,14 +44,17 @@ const authMiddleware = async (req, res, next) => {
 
 const logger = pino({ level: 'silent' });
 
-async function handleAIResponse(prompt, context = 'general') {
+// ==================== AI RESPONSE HANDLER ====================
+
+async function handleAIResponse(prompt, context = 'general', ownerName = 'Wisdom') {
   try {
     let systemPrompt = 'You are a helpful assistant.';
 
     if (context === 'dm_conversation') {
-      systemPrompt = `You are Wiz AI Pro, a friendly WhatsApp bot assistant. The owner is currently offline.
+      systemPrompt = `You are Wiz AI Pro, a friendly WhatsApp bot assistant. The owner ${ownerName} is currently offline.
 Respond in a casual, warm Nigerian Pidgin English style like "I dey, how your side?" or "Wetin dey happen?".
-Be conversational, use emojis, and let them know the owner will reply soon. Keep responses short and friendly.`;
+Be conversational, use emojis, and let them know ${ownerName} will reply soon. Keep responses short and friendly.
+NEVER use markdown asterisks (*) or formatting. Write naturally.`;
     }
 
     const response = await axios.post(process.env.DEEPSEEK_API_URL, {
@@ -59,79 +63,140 @@ Be conversational, use emojis, and let them know the owner will reply soon. Keep
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt }
       ],
-      max_tokens: 500
+      max_tokens: 2000,
+      stream: false
     }, {
       headers: {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
         'Content-Type': 'application/json'
       }
     });
-    return response.data.choices[0].message.content;
+
+    let text = response.data.choices[0].message.content;
+    text = text.replace(/\*\*/g, '').replace(/\*/g, '');
+    text = text.replace(/_/g, '');
+    text = text.replace(/```/g, '');
+
+    return text;
   } catch (err) {
     return 'AI service unavailable. Please try again later.';
   }
 }
 
+// ==================== MESSAGE STREAMING ====================
+
+async function sendStreamResponse(sock, remoteJid, text, quotedMsg) {
+  const MAX_LENGTH = 4000;
+
+  if (text.length <= MAX_LENGTH) {
+    await sock.sendMessage(remoteJid, { text: text }, { quoted: quotedMsg });
+    return;
+  }
+
+  const chunks = [];
+  let currentChunk = '';
+  const sentences = text.split(/(?<=[.!?])\s+/);
+
+  for (const sentence of sentences) {
+    if ((currentChunk + sentence).length > MAX_LENGTH) {
+      chunks.push(currentChunk.trim());
+      currentChunk = sentence;
+    } else {
+      currentChunk += ' ' + sentence;
+    }
+  }
+
+  if (currentChunk) chunks.push(currentChunk.trim());
+
+  for (let i = 0; i < chunks.length; i++) {
+    await sock.sendMessage(remoteJid, {
+      text: chunks[i] + (i < chunks.length - 1 ? '\n\n...' : '')
+    }, i === 0 ? { quoted: quotedMsg } : {});
+
+    if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 500));
+  }
+}
+
+// ==================== WELCOME MESSAGE ====================
+
 async function sendWelcomeMessage(sock, userId, phoneNumber) {
   try {
     let cleanPhone = phoneNumber.toString().replace(/\D/g, '');
-
     console.log(`[${userId}] Sending welcome to phone:`, cleanPhone);
     console.log(`[${userId}] Socket user ID:`, sock.user?.id);
 
     const jid = `${cleanPhone}@s.whatsapp.net`;
 
     const welcomeText = `╔═══════════════════════════╗
-║  🤖 *WIZ AI PRO* 🤖        ║
-║  ⚡ *PREMIUM EDITION* ⚡    ║
+║  🤖 WIZ AI PRO 🤖         ║
+║  ⚡ PREMIUM EDITION ⚡     ║
 ╚═══════════════════════════╝
 
-🎉 *Bot Activated Successfully!*
+🎉 Bot Activated Successfully!
 
-👑 *Owner:* WISDOM
-📱 *Number:* ${cleanPhone}
-⏰ *Time:* ${new Date().toLocaleString()}
-🌟 *Status:* ONLINE ✅
+👑 Owner: WISDOM
+📱 Number: ${cleanPhone}
+⏰ Time: ${new Date().toLocaleString()}
+🌟 Status: ONLINE ✅
 
 ╔═══════════════════════════╗
-║  📊 *BOT STATISTICS*       ║
+║  📊 BOT STATISTICS        ║
 ╠═══════════════════════════╣
-║  • 200+ Commands          ║
-║  • 9 Categories           ║
+║  • 250+ Commands          ║
+║  • 10 Categories          ║
 ║  • AI-Powered             ║
+║  • Smart Auto-Reply       ║
 ║  • 24/7 Online            ║
 ╚═══════════════════════════╝
 
-✨ *FEATURE CATEGORIES:*
+✨ CATEGORIES:
+👥 Group | 🛡️ Mod | 🤖 AI
+💰 Economy | 🎮 Games | 😂 Fun
+🛠️ Utility | 📺 Media | 👑 Owner
 
-👥 *Group Management* (19 cmds)
-🛡️ *Moderation* (8 cmds)
-🤖 *AI & Smart Tools* (7 cmds)
-💰 *Economy System* (8 cmds)
-🎮 *Games* (6 cmds)
-😂 *Fun* (10 cmds)
-🛠️ *Utility* (12 cmds)
-📺 *Media Download* (17 cmds)
-👑 *Owner Only* (5 cmds)
+🚀 QUICK START:
+.menu - All commands
+.help - Command details
+.ping - Check status
 
-🚀 *QUICK START:*
-Type *.menu* - See all commands
-Type *.help* - Command details
-Type *.ping* - Check status
+📢 Channel: https://whatsapp.com/channel/0029VbCOs0vGU3BI6SYsDf17
 
-📢 *Join our Channel:*
-https://whatsapp.com/channel/0029VbCOs0vGU3BI6SYsDf17
-
-⚡ _Powered by Wiz AI Pro v2.0_
-🤖 _Your Ultimate WhatsApp Assistant_`;
+⚡ Powered by Wiz AI Pro v3.0
+🤖 Your Ultimate Assistant`;
 
     await sock.sendMessage(jid, { text: welcomeText });
     console.log(`[${userId}] ✅ Welcome sent to ${jid}`);
 
   } catch (err) {
     console.error(`[${userId}] Welcome failed:`, err.message);
-    console.error(`[${userId}] Error stack:`, err.stack);
   }
 }
 
-module.exports = { app, activeSessions, authMiddleware, logger, handleAIResponse, sendWelcomeMessage };
+// ==================== SOCKET MONITORING ====================
+
+function registerSocket(userId, socket) {
+  activeSockets.set(userId, {
+    socket,
+    connectedAt: Date.now(),
+    lastPing: Date.now()
+  });
+}
+
+function unregisterSocket(userId) {
+  activeSockets.delete(userId);
+}
+
+// ==================== EXPORTS ====================
+
+module.exports = { 
+  app, 
+  activeSessions, 
+  authMiddleware, 
+  logger, 
+  handleAIResponse, 
+  sendStreamResponse, 
+  sendWelcomeMessage,
+  registerSocket,
+  unregisterSocket,
+  activeSockets
+};

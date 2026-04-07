@@ -1,8 +1,11 @@
-const { app, activeSessions, authMiddleware } = require('./server_part1');
+const { app, activeSessions, authMiddleware, activeSockets } = require('./server_part1');
 const { createWhatsAppSession } = require('./server_part3');
 const User = require('./models/User');
 const { commands } = require('./commands');
 const jwt = require('jsonwebtoken');
+const axios = require('axios');
+
+// ==================== AUTH ROUTES ====================
 
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -11,9 +14,9 @@ app.post('/api/auth/register', async (req, res) => {
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
     }
-    const user = new User({ 
-      username, 
-      email, 
+    const user = new User({
+      username,
+      email,
       password,
       botSettings: {
         autoReply: true,
@@ -68,6 +71,8 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
     }
   });
 });
+
+// ==================== WHATSAPP ROUTES ====================
 
 app.post('/api/whatsapp/pair', authMiddleware, async (req, res) => {
   try {
@@ -140,6 +145,8 @@ app.post('/api/whatsapp/settings', authMiddleware, async (req, res) => {
   }
 });
 
+// ==================== DASHBOARD ROUTES ====================
+
 app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
@@ -176,17 +183,56 @@ app.get('/api/servers', authMiddleware, (req, res) => {
   });
 });
 
+// ==================== HEALTH CHECK (Keep-Alive) ====================
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'online',
+    bot: 'Wiz AI Pro',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    memory: process.memoryUsage(),
+    activeSessions: activeSockets.size
+  });
+});
+
+app.get('/healthz', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+// ==================== START SERVER ====================
+
 const PORT = process.env.PORT || 8090;
+
 app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════╗
 ║     🤖 WIZ AI PRO SERVER 🤖        ║
 ║                                    ║
 ║  ✅ Server running on port ${PORT}     ║
-║  📱 WhatsApp Bot Ready            ║
-║  🌐 API Endpoints Active          ║
+║  📱 WhatsApp Bot Ready             ║
+║  🌐 API Endpoints Active           ║
+║  🔄 Auto-Reconnect Enabled         ║
+║  💓 Keep-Alive Enabled             ║
 ║                                    ║
-║  👑 Created by: WISDOM            ║
+║  👑 Created by: WISDOM             ║
 ╚════════════════════════════════════╝
   `);
+  
+  // Self-ping to prevent Render idle timeout
+  if (process.env.RENDER_EXTERNAL_URL) {
+    const selfUrl = process.env.RENDER_EXTERNAL_URL + '/health';
+    setInterval(async () => {
+      try {
+        await axios.get(selfUrl, { timeout: 30000 });
+        console.log(`[KeepAlive] Self-ping success at ${new Date().toISOString()}`);
+      } catch (err) {
+        console.error(`[KeepAlive] Self-ping failed: ${err.message}`);
+      }
+    }, 10 * 60 * 1000); // Every 10 minutes
+    
+    console.log(`✅ Self-ping started: ${selfUrl}`);
+  }
 });
+
+module.exports = {};
